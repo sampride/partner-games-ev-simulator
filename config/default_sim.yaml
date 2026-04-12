@@ -58,3 +58,5 @@ assets:
             interval: 1.0
           - name: "Session_Duration"
             interval: 1.0
+          - name: "Error_Code"
+            interval: 1.0

@@ -25,10 +25,12 @@ class EVCharger(Asset):
             SensorConfig("EV_State_of_Charge", 1.0, 0.0),
             SensorConfig("Charger_State", 1.0, 0.0),
             SensorConfig("Session_Duration", 1.0, 0.0),
+            SensorConfig("Error_Code", 1.0, 0.0),  # <-- NEW
         ]
 
         self.state = {
             "charger_state": 0,  # 0=Idle, 1=Handshaking, 2=Charging, 3=Throttled, 4=Fault
+            "error_code": 0,  # 0=None, 1=Thermal_Trip, 2=Grid_Fault (for future use)
             "session_duration_sec": 0.0,
             # Vehicle Variables
             "ev_battery_capacity_kwh": 0.0,
@@ -46,16 +48,14 @@ class EVCharger(Asset):
         }
 
     def start_session(self, duration_sec: float) -> None:
-        """Site controller calls this when a car plugs in."""
-        self.state["charger_state"] = 1  # Start in Handshaking
+        if self.state["charger_state"] == 4:
+            return  # Ignore connection attempts if faulted
+
+        self.state["charger_state"] = 1
         self.state["session_duration_sec"] = 0.0
-
-        # Randomize the arriving vehicle's specs
         self.state["ev_battery_capacity_kwh"] = random.uniform(60.0, 100.0)
-        self.state["ev_soc_percent"] = random.uniform(10.0, 40.0)  # Arrives with low battery
-        self.state["ev_base_voltage"] = random.choice([400.0, 800.0])  # 400V or 800V architecture
-
-        # Max request depends on the car's architecture
+        self.state["ev_soc_percent"] = random.uniform(10.0, 40.0)
+        self.state["ev_base_voltage"] = random.choice([400.0, 800.0])
         self.state["requested_current_a"] = (
             200.0 if self.state["ev_base_voltage"] == 400.0 else 350.0
         )
@@ -65,45 +65,59 @@ class EVCharger(Asset):
     ) -> None:
         ambient_temp = global_state.get("ambient_temp_c", 25.0)
 
-        # 1. State Machine & Time
+        # 1. HARD FAULT LOGIC (The physical protection relay)
+        if self.state["cabinet_temp_c"] >= 85.0 and self.state["charger_state"] != 4:
+            # Trip the breaker immediately
+            self.state["charger_state"] = 4
+            self.state["error_code"] = 1  # 1 = OverTemp
+            self.state["requested_current_a"] = 0.0
+            self.state["output_current_a"] = 0.0  # Instant drop, no ramp down
+            self.state["current_power_kw"] = 0.0
+
+        # 2. FAULT RECOVERY LOGIC (Auto-Clear)
+        if self.state["charger_state"] == 4:
+            # Wait for passive/active cooling to bring it back to a safe baseline
+            if self.state["cabinet_temp_c"] <= 45.0:
+                self.state["charger_state"] = 0
+                self.state["error_code"] = 0
+                # Session is wiped out, customer drove away angry
+                self.state["ev_soc_percent"] = 0.0
+
+        # 3. State Machine & Time
         if self.state["charger_state"] in [1, 2, 3]:
             self.state["session_duration_sec"] += delta_sec
-
-            # Handshake takes 5 seconds, then begin charging
             if self.state["charger_state"] == 1 and self.state["session_duration_sec"] > 5.0:
                 self.state["charger_state"] = 2
-
-            # Finish if SOC hits 95%
             if self.state["ev_soc_percent"] >= 95.0:
                 self.state["charger_state"] = 0
                 self.state["requested_current_a"] = 0.0
 
-        # 2. Thermal Protection Logic (Throttling)
-        # If cabinet gets too hot, drop into state 3 and reduce requested current
+        # 4. Thermal Throttling Logic (Preventative)
         if self.state["charger_state"] in [2, 3]:
             if self.state["cabinet_temp_c"] > 65.0:
                 self.state["charger_state"] = 3
-                self.state["requested_current_a"] = 50.0  # Heavy throttle
+                self.state["requested_current_a"] = 50.0
             elif self.state["cabinet_temp_c"] < 55.0 and self.state["charger_state"] == 3:
                 self.state["charger_state"] = 2
-                self.state["requested_current_a"] = 200.0  # Resume full power
+                self.state["requested_current_a"] = (
+                    200.0 if self.state["ev_base_voltage"] == 400.0 else 350.0
+                )
 
-        # 3. Electrical Math
+        # 5. Electrical Math
         if self.state["charger_state"] == 0:
             self.state["requested_current_a"] = 0.0
 
-        curr_diff = self.state["requested_current_a"] - self.state["output_current_a"]
-        self.state["output_current_a"] += curr_diff * 2.0 * delta_sec
+        # Only ramp current if we aren't faulted (fault drops instantly to 0)
+        if self.state["charger_state"] != 4:
+            curr_diff = self.state["requested_current_a"] - self.state["output_current_a"]
+            self.state["output_current_a"] += curr_diff * 2.0 * delta_sec
+
         current = self.state["output_current_a"]
 
-        dc_voltage = 0.0
-        if current > 1.0:
-            # Simulate Li-ion charge curve: Voltage rises as SOC increases
+        if current > 1.0 and self.state["charger_state"] != 4:
             dc_voltage = self.state["ev_base_voltage"] + (
                 self.state["ev_soc_percent"] / 100.0 * 50.0
             )
-
-            # Calculate power and increment Battery SOC
             self.state["current_power_kw"] = (current * dc_voltage) / 1000.0
             kwh_added = (self.state["current_power_kw"] * delta_sec) / 3600.0
             self.state["ev_soc_percent"] += (
@@ -112,10 +126,10 @@ class EVCharger(Asset):
         else:
             self.state["current_power_kw"] = 0.0
 
-        # 4. Thermal & Mechanical Math
+        # 6. Thermal & Mechanical Math
         heat_generated = (current / 200.0) ** 2 * 6.0
 
-        # Fans (Air Cooling for Cabinet)
+        # Fan runs hard if hot, even if faulted, to cool the system down
         target_rpm = max(0.0, min(4500.0, (self.state["cabinet_temp_c"] - 30.0) * 300.0))
         self.state["cooling_fan_rpm"] += (
             (target_rpm - self.state["cooling_fan_rpm"]) * 1.0 * delta_sec
@@ -128,7 +142,6 @@ class EVCharger(Asset):
             - ((self.state["cabinet_temp_c"] - ambient_temp) * 0.05)
         ) * delta_sec
 
-        # Liquid Cooling (For the Cable)
         target_lpm = max(0.0, min(15.0, (self.state["cable_temp_c"] - 30.0) * 1.5))
         self.state["coolant_flow_lpm"] += (
             (target_lpm - self.state["coolant_flow_lpm"]) * 0.5 * delta_sec
@@ -144,7 +157,6 @@ class EVCharger(Asset):
         is_active = self.state["charger_state"] in [1, 2, 3]
 
         match sensor_name:
-            # Electrical
             case "Grid_Voltage_AC":
                 return round(
                     global_state.get("current_grid_voltage", 400.0) + random.gauss(0, 1.0), 2
@@ -157,43 +169,53 @@ class EVCharger(Asset):
                 )
                 return round(base_v + random.gauss(0, 0.5), 2)
             case "Output_Current_DC":
-                if self.state["output_current_a"] < 1.0:
-                    return 0.0
-                return round(self.state["output_current_a"] + random.gauss(0, 0.5), 2)
+                return (
+                    round(self.state["output_current_a"] + random.gauss(0, 0.5), 2)
+                    if self.state["output_current_a"] >= 1.0
+                    else 0.0
+                )
             case "Requested_Current_DC":
                 return round(self.state["requested_current_a"], 2)
-
-            # Mechanical & Cooling
             case "Cooling_Fan_RPM":
-                rpm = self.state["cooling_fan_rpm"]
-                return round(rpm + random.gauss(0, rpm * 0.02) if rpm > 10 else 0, 0)
+                return (
+                    round(
+                        self.state["cooling_fan_rpm"]
+                        + random.gauss(0, self.state["cooling_fan_rpm"] * 0.02),
+                        0,
+                    )
+                    if self.state["cooling_fan_rpm"] > 10
+                    else 0.0
+                )
             case "Coolant_Flow_LPM":
-                lpm = self.state["coolant_flow_lpm"]
-                return round(lpm + random.gauss(0, lpm * 0.05) if lpm > 0.5 else 0, 2)
+                return (
+                    round(
+                        self.state["coolant_flow_lpm"]
+                        + random.gauss(0, self.state["coolant_flow_lpm"] * 0.05),
+                        2,
+                    )
+                    if self.state["coolant_flow_lpm"] > 0.5
+                    else 0.0
+                )
             case "Coolant_Pressure_kPa":
-                # Pressure is roughly proportional to flow squared, plus base system pressure (150 kPa)
-                if self.state["coolant_flow_lpm"] < 0.5:
-                    return 150.0
-                pressure = 150.0 + (self.state["coolant_flow_lpm"] ** 2 * 0.8)
-                return round(pressure + random.gauss(0, 2.0), 1)
-
-            # Thermal
+                return (
+                    round(
+                        150.0 + (self.state["coolant_flow_lpm"] ** 2 * 0.8) + random.gauss(0, 2.0),
+                        1,
+                    )
+                    if self.state["coolant_flow_lpm"] >= 0.5
+                    else 150.0
+                )
             case "Ambient_Temp":
                 return round(global_state.get("ambient_temp_c", 25.0) + random.gauss(0, 0.2), 2)
             case "Cabinet_Temp":
                 return round(self.state["cabinet_temp_c"] + random.gauss(0, 0.1), 2)
             case "Cable_Connector_Temp":
                 return round(self.state["cable_temp_c"] + random.gauss(0, 0.1), 2)
-
-            # State
             case "EV_State_of_Charge":
-                if not is_active:
-                    return 0.0
-                return round(self.state["ev_soc_percent"], 1)
+                return round(self.state["ev_soc_percent"], 1) if is_active else 0.0
             case "Charger_State":
                 return float(self.state["charger_state"])
             case "Session_Duration":
-                if not is_active: return 0.0
-                return round(self.state["session_duration_sec"], 0)
-            case _:
-                return 0.0
+                return round(self.state["session_duration_sec"], 0) if is_active else 0.0
+            case "Error_Code": return float(self.state["error_code"]) # <-- NEW
+            case _: return 0.0
