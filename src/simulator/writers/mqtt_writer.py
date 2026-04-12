@@ -13,13 +13,18 @@ class MqttWriter:
         base_topic: str = "ev_network",
         allow_backfill: bool = False,
         allow_realtime: bool = True,
-        max_buffer_size: int = 5000,  # Buffers ~4 minutes of data at 20Hz
+        # NEW: Extracted Resiliency Configurations
+        max_buffer_size: int = 5000,
+        reconnect_min_delay: int = 1,
+        reconnect_max_delay: int = 60,
+        boot_backoff_max: float = 30.0,
     ) -> None:
         self.host = host
         self.port = port
         self.base_topic = base_topic.strip("/")
         self.allow_backfill = allow_backfill
         self.allow_realtime = allow_realtime
+        self.boot_backoff_max = boot_backoff_max
 
         # Resiliency State
         self.is_connected = False
@@ -28,8 +33,10 @@ class MqttWriter:
         # Paho Client Setup (v2 API)
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
-        # Configure internal Paho exponential backoff for lost connections
-        self.client.reconnect_delay_set(min_delay=1, max_delay=60)
+        # Apply the configured Paho reconnect delays
+        self.client.reconnect_delay_set(
+            min_delay=reconnect_min_delay, max_delay=reconnect_max_delay
+        )
 
         # Attach Callbacks
         self.client.on_connect = self._on_connect
@@ -63,7 +70,6 @@ class MqttWriter:
     async def _maintain_initial_connection(self) -> None:
         """Background task to handle exponential backoff if the broker is missing on boot."""
         backoff = 1.0
-        max_backoff = 30.0
 
         while not self.is_connected:
             try:
@@ -77,7 +83,7 @@ class MqttWriter:
             except Exception as e:
                 print(f"[MQTT] Broker unavailable ({e}). Retrying in {backoff}s...")
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+                backoff = min(backoff * 2, self.boot_backoff_max)
 
     async def write_batch(self, data: list[dict[str, Any]]) -> None:
         if not data:
