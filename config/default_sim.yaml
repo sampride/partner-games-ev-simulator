@@ -1,0 +1,44 @@
+
+simulation:
+  tick_rate_sec: 0.1
+  backfill_days: 3
+
+writers:
+  - type: csv
+    config:
+      output_dir: "data"
+      filename: "history.csv"
+      allow_backfill: true
+      allow_realtime: false
+
+  - type: mqtt
+    config:
+      host: "localhost"
+      port: 1883
+      topic_prefix: "telemetry"
+      allow_backfill: false # It will ignore the 3-day backfill and only publish live data
+      allow_realtime: true
+
+assets:
+  - name: "Charger_01"
+    type: "EVCharger"
+
+  - name: "Charger_02"
+    type: "EVCharger"
+
+  - name: "Sump_North_Suburbs"
+    type: "SumpStation"
+    state:
+      pump_1_efficiency: 1.0
+    sensors:
+      # Slow level sensor
+      - name: "level_m"
+        interval: 10.0
+        jitter: 1.0
+      # Fast electrical monitoring
+      - name: "pump_1_amps"
+        interval: 0.5
+        jitter: 0.05
+      - name: "discharge_flow_lps"
+        interval: 5.0
+        jitter: 0.5
