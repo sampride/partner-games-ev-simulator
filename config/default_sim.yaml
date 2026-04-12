@@ -1,7 +1,7 @@
 
 simulation:
-  tick_rate_sec: 0.1
-  backfill_days: 3
+  tick_rate_sec: 0.05
+  backfill_days: 0
 
 writers:
   - type: csv
@@ -15,30 +15,41 @@ writers:
     config:
       host: "localhost"
       port: 1883
-      topic_prefix: "telemetry"
+      #topic_prefix: "telemetry"
       allow_backfill: false # It will ignore the 3-day backfill and only publish live data
       allow_realtime: true
+      base_topic: "ev_network/Site_Melbourne_North"
 
 assets:
-  - name: "Charger_01"
-    type: "EVCharger"
-
-  - name: "Charger_02"
-    type: "EVCharger"
-
-  - name: "Sump_North_Suburbs"
-    type: "SumpStation"
-    state:
-      pump_1_efficiency: 1.0
-    sensors:
-      # Slow level sensor
-      - name: "level_m"
-        interval: 10.0
-        jitter: 1.0
-      # Fast electrical monitoring
-      - name: "pump_1_amps"
-        interval: 0.5
-        jitter: 0.05
-      - name: "discharge_flow_lps"
-        interval: 5.0
-        jitter: 0.5
+  - name: "Site_Melbourne_North"
+    type: "ChargingSite"
+    max_queue: 3
+    chargers:
+      - name: "Charger_01"
+        sensors:
+          - name: "Grid_Voltage_AC"
+            interval: 0.05
+          - name: "Output_Voltage_DC"
+            interval: 0.05
+          - name: "Output_Current_DC"
+            interval: 0.05
+          - name: "Requested_Current_DC"
+            interval: 0.05
+          - name: "Cooling_Fan_RPM"
+            interval: 0.5
+          - name: "Coolant_Flow_LPM"
+            interval: 0.5
+          - name: "Coolant_Pressure_kPa"
+            interval: 0.5
+          - name: "Ambient_Temp"
+            interval: 2.0
+          - name: "Cabinet_Temp"
+            interval: 2.0
+          - name: "Cable_Connector_Temp"
+            interval: 2.0
+          - name: "EV_State_of_Charge"
+            interval: 1.0
+          - name: "Charger_State"
+            interval: 1.0
+          - name: "Session_Duration"
+            interval: 1.0

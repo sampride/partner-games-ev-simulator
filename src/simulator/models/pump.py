@@ -1,4 +1,5 @@
 import random
+from datetime import datetime
 from simulator.models.base import Asset, SensorConfig
 
 class CentrifugalPump(Asset):
@@ -17,12 +18,12 @@ class CentrifugalPump(Asset):
             "friction_coefficient": 0.01
         }
 
-    def update_internal_state(self, delta_sec: float) -> None:
+    def update_internal_state(self, delta_sec: float, current_time: datetime, global_state: dict) -> None:
         rpm_diff = self.state["target_rpm"] - self.state["current_rpm"]
         self.state["current_rpm"] += rpm_diff * 0.1 * delta_sec
         self.state["current_rpm"] += random.uniform(-5.0, 5.0)
 
-    def read_sensor(self, sensor_name: str) -> float:
+    def read_sensor(self, sensor_name: str, global_state: dict[str, Any]) -> float:
         rpm = self.state["current_rpm"]
 
         match sensor_name:

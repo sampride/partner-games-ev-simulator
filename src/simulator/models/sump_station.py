@@ -71,7 +71,7 @@ class SumpStation(Asset):
         level_change = (net_flow_m3_sec * delta_sec) / self.state["sump_area_m2"]
         self.state["level_m"] = max(0.0, level + level_change)
 
-    def read_sensor(self, sensor_name: str) -> float:
+    def read_sensor(self, sensor_name: str, global_state: dict[str, Any]) -> float:
         match sensor_name:
             case "level_m":
                 return round(self.state["level_m"] + random.gauss(0, 0.01), 3)

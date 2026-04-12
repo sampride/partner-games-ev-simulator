@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+
 @dataclass
 class SensorConfig:
     name: str
@@ -20,7 +21,10 @@ class SensorConfig:
         jitter = random.uniform(-self.jitter_sec, self.jitter_sec)
         self.next_update = current_time + timedelta(seconds=self.update_interval_sec + jitter)
 
+
 class Asset:
+    """Base class for all simulated equipment."""
+
     def __init__(self, name: str) -> None:
         self.name = name
         self.state: dict[str, Any] = {}
@@ -37,16 +41,19 @@ class Asset:
                     "timestamp": current_time.isoformat(),
                     "asset": self.name,
                     "sensor": sensor.name,
-                    "value": self.read_sensor(sensor.name)
+                    # Pass the global state down to the sensor reader
+                    "value": self.read_sensor(sensor.name, global_state),
                 }
                 self._pending_data.append(payload)
                 sensor.set_next_update(current_time)
 
-    def update_internal_state(self, delta_sec: float, current_time: datetime, global_state: dict[str, Any]) -> None:
-        raise NotImplementedError
+    def update_internal_state(
+        self, delta_sec: float, current_time: datetime, global_state: dict[str, Any]
+    ) -> None:
+        raise NotImplementedError("Subclasses must implement update_internal_state")
 
-    def read_sensor(self, sensor_name: str) -> float:
-        raise NotImplementedError
+    def read_sensor(self, sensor_name: str, global_state: dict[str, Any]) -> float:
+        raise NotImplementedError("Subclasses must implement read_sensor")
 
     def flush_data(self) -> list[dict[str, Any]]:
         data = self._pending_data
