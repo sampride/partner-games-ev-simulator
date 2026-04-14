@@ -39,8 +39,9 @@ simulation:
 writers:
   - type: csv
     config:
-      output_dir: "/data"
+      output_dir: "/data/unified"
       filename: "ev_history.csv"
+      max_size_mb: 25.0
       allow_backfill: true
       allow_realtime: true
       
