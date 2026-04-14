@@ -1,3 +1,4 @@
+import os
 import asyncio
 from pathlib import Path
 
@@ -9,10 +10,20 @@ async def main() -> None:
 
     print("Initializing Partner Games Simulator...")
 
-    # Define paths
-    project_root = Path(__file__).parent.parent.parent
-    config_path = project_root / "config" / "default_sim.yaml"
-    state_file_path = project_root / "data" / "simulator_cursor.json"
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent.parent
+
+    # 1. Use Environment Variables for paths, falling back to local dev folders
+    config_path = Path(os.getenv("SIM_CONFIG_PATH", project_root / "config" / "default_sim.yaml"))
+    data_dir = Path(os.getenv("SIM_DATA_PATH", project_root / "data"))
+
+    # Ensure the data directory exists
+    data_dir.mkdir(parents=True, exist_ok=True)
+    state_file_path = data_dir / "simulator_cursor.json"
+
+    print(f"Loading configuration from {config_path}...")
+    if not config_path.exists():
+        raise FileNotFoundError(f"CRITICAL: Could not find the config file at {config_path}")
 
     # Load configuration
     config_dict = load_config(config_path)

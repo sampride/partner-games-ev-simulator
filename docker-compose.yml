@@ -1,0 +1,20 @@
+services:
+  ev-simulator:
+    build: .
+    container_name: ev-simulator
+    network_mode: "host"
+    restart: unless-stopped
+    environment:
+      # Since network_mode is host, 127.0.0.1 hits the Raspberry Pi's local network
+      - MQTT_HOST=127.0.0.1
+
+      # Tell the Python script exactly where the mounted files are
+      - SIM_CONFIG_PATH=/opt/apg/sim/default_sim.yaml
+      - SIM_DATA_PATH=/data
+
+    volumes:
+      # Map the RPi's /opt/apg/sim folder into the container at the exact same path
+      - /opt/apg/sim:/opt/apg/sim:ro
+
+      # Map the RPi's output data folder to the container's /data folder
+      - /data:/data:rw

@@ -1,3 +1,4 @@
+import os
 import yaml
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,17 @@ def build_simulation_components(
         w_kwargs = w_conf.get("config", {})
 
         if "output_dir" in w_kwargs:
-            w_kwargs["output_dir"] = str(project_root / w_kwargs["output_dir"])
+            out_dir = Path(w_kwargs["output_dir"])
+            # Only prepend project_root if the path is relative (e.g., "data")
+            # If it's absolute (e.g., "/data"), leave it alone.
+            if not out_dir.is_absolute():
+                w_kwargs["output_dir"] = str(project_root / out_dir)
+
+
+        if w_type == "mqtt":
+            # This overrides the YAML's 'host' key if the Docker ENV variable exists
+            w_kwargs["host"] = os.getenv("MQTT_HOST", w_kwargs.get("host", "localhost"))
+
 
         if w_type in WRITER_REGISTRY:
             writer_class = WRITER_REGISTRY[w_type]
@@ -100,6 +111,13 @@ def build_simulation_components(
                 # Re-use the helpers for the nested children
                 _apply_state_overrides(charger, c_conf.get("state", {}))
                 _apply_sensor_overrides(charger, c_conf.get("sensors", []))
+
+                # <-- NEW: Attach Scheduled Anomalies -->
+                if "anomalies" in c_conf:
+                    charger.scheduled_anomalies = c_conf["anomalies"]
+
+                if "random_anomalies" in c_conf:
+                    charger.random_anomaly_config.update(c_conf["random_anomalies"])
 
                 site.add_charger(charger)
 

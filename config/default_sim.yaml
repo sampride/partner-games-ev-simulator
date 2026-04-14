@@ -1,62 +1,114 @@
+# --- YAML Anchor Definitions ---
+# This defines the standard sensor polling rates once, to be reused below.
+.standard_sensors: &standard_sensors
+  - name: "Grid_Voltage_AC"
+    interval: 0.05
+  - name: "Output_Voltage_DC"
+    interval: 0.05
+  - name: "Output_Current_DC"
+    interval: 0.05
+  - name: "Requested_Current_DC"
+    interval: 0.05
+  - name: "Cooling_Fan_RPM"
+    interval: 0.5
+  - name: "Coolant_Flow_LPM"
+    interval: 0.5
+  - name: "Coolant_Pressure_kPa"
+    interval: 0.5
+  - name: "Ambient_Temp"
+    interval: 2.0
+  - name: "Cabinet_Temp"
+    interval: 2.0
+  - name: "Cable_Connector_Temp"
+    interval: 2.0
+  - name: "EV_State_of_Charge"
+    interval: 1.0
+  - name: "Charger_State"
+    interval: 1.0
+  - name: "Session_Duration"
+    interval: 1.0
+  - name: "Error_Code"
+    interval: 1.0
 
+# --- Engine Configuration ---
 simulation:
-  tick_rate_sec: 0.05
-  backfill_days: 0
+  tick_rate_sec: 0.05 
+  backfill_days: 1
 
+# --- I/O Writers ---
 writers:
   - type: csv
     config:
-      output_dir: "data"
-      filename: "history.csv"
+      output_dir: "/data"
+      filename: "ev_history.csv"
       allow_backfill: true
-      allow_realtime: false
-
+      allow_realtime: true
+      
   - type: mqtt
     config:
       host: "localhost"
       port: 1883
-      #topic_prefix: "telemetry"
-      allow_backfill: false # It will ignore the 3-day backfill and only publish live data
-      allow_realtime: true
       base_topic: "ev_network/Site_Melbourne_North"
-      # Resiliency Settings
-      max_buffer_size: 5000       # How many ticks to cache offline
-      reconnect_min_delay: 1      # Paho minimum reconnect wait (seconds)
-      reconnect_max_delay: 60     # Paho maximum reconnect wait (seconds)
-      boot_backoff_max: 30.0      # Async boot retry maximum wait (seconds)
+      allow_backfill: false
+      allow_realtime: true
+      max_buffer_size: 5000       
+      reconnect_min_delay: 1      
+      reconnect_max_delay: 60     
+      boot_backoff_max: 30.0      
 
+# --- Physical Assets ---
 assets:
   - name: "Site_Melbourne_North"
     type: "ChargingSite"
     max_queue: 3
     chargers:
+    
+      # Charger 1: The Control Group. Completely reliable, no anomalies.
       - name: "Charger_01"
-        sensors:
-          - name: "Grid_Voltage_AC"
-            interval: 0.05
-          - name: "Output_Voltage_DC"
-            interval: 0.05
-          - name: "Output_Current_DC"
-            interval: 0.05
-          - name: "Requested_Current_DC"
-            interval: 0.05
-          - name: "Cooling_Fan_RPM"
-            interval: 0.5
-          - name: "Coolant_Flow_LPM"
-            interval: 0.5
-          - name: "Coolant_Pressure_kPa"
-            interval: 0.5
-          - name: "Ambient_Temp"
-            interval: 2.0
-          - name: "Cabinet_Temp"
-            interval: 2.0
-          - name: "Cable_Connector_Temp"
-            interval: 2.0
-          - name: "EV_State_of_Charge"
-            interval: 1.0
-          - name: "Charger_State"
-            interval: 1.0
-          - name: "Session_Duration"
-            interval: 1.0
-          - name: "Error_Code"
-            interval: 1.0
+        sensors: *standard_sensors
+            
+      # Charger 2: The Demo Target. A scheduled fan failure for live presentation.
+      - name: "Charger_02"
+        anomalies:
+          - type: "FAN_FAILURE"
+            start_sec: 600       # Fails exactly 10 minutes into the simulation
+            duration_sec: 7200   # Lasts for 2 hours
+        sensors: *standard_sensors
+            
+      # Charger 3: The Wildcard. Low chance of any fault occurring organically.
+      - name: "Charger_03"
+        random_anomalies:
+          enabled: true
+          chance_per_hour: 0.02  # 2% chance per hour
+          types: ["FAN_FAILURE", "CONNECTOR_ARCING", "BMS_CHATTER"]
+          min_duration_sec: 1800 
+          max_duration_sec: 14400
+        sensors: *standard_sensors
+          
+      # Charger 4: The Lemon. High chance of failing, but only suffers from bad fans.
+      - name: "Charger_04"
+        random_anomalies:
+          enabled: true
+          chance_per_hour: 0.08  # 8% chance per hour
+          types: ["FAN_FAILURE"]
+          min_duration_sec: 3600
+          max_duration_sec: 7200
+        sensors: *standard_sensors
+
+      # Charger 5: The Fire Hazard. Scheduled arcing fault.
+      - name: "Charger_05"
+        anomalies:
+          - type: "CONNECTOR_ARCING"
+            start_sec: 3600      # Fails exactly 1 hour into the simulation
+            duration_sec: 1800   # Lasts for 30 minutes
+        sensors: *standard_sensors
+
+      # Charger 6: The Software Bug. Low chance of BMS Chattering.
+      - name: "Charger_06"
+        random_anomalies:
+          enabled: true
+          chance_per_hour: 0.03  
+          types: ["BMS_CHATTER"]
+          min_duration_sec: 900
+          max_duration_sec: 3600
+        sensors: *standard_sensors

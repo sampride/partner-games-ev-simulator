@@ -45,6 +45,20 @@ class EVCharger(Asset):
             "cable_temp_c": 25.0,
             "cooling_fan_rpm": 0.0,
             "coolant_flow_lpm": 0.0,
+            "simulation_uptime_sec": 0.0,
+            "active_anomaly": "NONE",
+            "anomaly_end_time_sec": 0.0,
+        }
+
+        # Format: {"type": "FAN_FAILURE", "start_sec": 600, "duration_sec": 1800}
+        self.scheduled_anomalies: list[dict] = []
+
+        self.random_anomaly_config = {
+            "enabled": False,
+            "chance_per_hour": 0.0,
+            "types": ["FAN_FAILURE", "CONNECTOR_ARCING", "BMS_CHATTER"],
+            "min_duration_sec": 1800,
+            "max_duration_sec": 7200,
         }
 
     def start_session(self, duration_sec: float) -> None:
@@ -64,6 +78,41 @@ class EVCharger(Asset):
         self, delta_sec: float, current_time: datetime, global_state: dict
     ) -> None:
         ambient_temp = global_state.get("ambient_temp_c", 25.0)
+
+        # 0. UPTIME & ANOMALY INJECTION
+        self.state["simulation_uptime_sec"] += delta_sec
+
+        # A. Check if a running anomaly has expired
+        if self.state["active_anomaly"] != "NONE":
+            if self.state["simulation_uptime_sec"] >= self.state["anomaly_end_time_sec"]:
+                self.state["active_anomaly"] = "NONE"
+
+        # B. Check Scheduled Anomalies (These override random ones)
+        for anomaly in self.scheduled_anomalies:
+            start = anomaly.get("start_sec", 0)
+            end = start + anomaly.get("duration_sec", 0)
+            if start <= self.state["simulation_uptime_sec"] < end:
+                self.state["active_anomaly"] = anomaly.get("type", "NONE")
+                self.state["anomaly_end_time_sec"] = end
+                break
+
+                # C. Roll the dice for a new Random Anomaly
+        if self.state["active_anomaly"] == "NONE" and self.random_anomaly_config.get(
+            "enabled", False
+        ):
+            # Convert chance per hour to chance per tick
+            chance_per_hr = self.random_anomaly_config.get("chance_per_hour", 0.01)
+            prob_per_tick = (chance_per_hr / 3600.0) * delta_sec
+
+            if random.random() < prob_per_tick:
+                types = self.random_anomaly_config.get("types", ["FAN_FAILURE"])
+                self.state["active_anomaly"] = random.choice(types)
+
+                min_dur = self.random_anomaly_config.get("min_duration_sec", 1800.0)
+                max_dur = self.random_anomaly_config.get("max_duration_sec", 7200.0)
+                duration = random.uniform(min_dur, max_dur)
+
+                self.state["anomaly_end_time_sec"] = self.state["simulation_uptime_sec"] + duration
 
         # 1. HARD FAULT LOGIC (The physical protection relay)
         if self.state["cabinet_temp_c"] >= 85.0 and self.state["charger_state"] != 4:
@@ -103,6 +152,14 @@ class EVCharger(Asset):
                     200.0 if self.state["ev_base_voltage"] == 400.0 else 350.0
                 )
 
+        # ANOMALY INJECTION: BMS Chattering (Behavioral Fault)
+        if self.state["active_anomaly"] == "BMS_CHATTER" and self.state[
+            "charger_state"
+        ] in [2, 3]:
+            # Rapidly oscillate the requested current between 10% and 100%
+            chatter_factor = 0.55 + 0.45 * math.sin(current_time.timestamp() * 4.0)
+            self.state["requested_current_a"] *= chatter_factor
+
         # 5. Electrical Math
         if self.state["charger_state"] == 0:
             self.state["requested_current_a"] = 0.0
@@ -126,11 +183,24 @@ class EVCharger(Asset):
         else:
             self.state["current_power_kw"] = 0.0
 
+        # ANOMALY INJECTION: Connector Arcing (Heat Divergence)
+        if self.state["active_anomaly"] == "CONNECTOR_ARCING" and self.state[
+            "charger_state"
+        ] in [2, 3]:
+            # Arcing generates massive localized heat at the pin, independent of normal I^2R losses
+            self.state["cable_temp_c"] += 2.0 * delta_sec
+
         # 6. Thermal & Mechanical Math
         heat_generated = (current / 200.0) ** 2 * 6.0
 
         # Fan runs hard if hot, even if faulted, to cool the system down
         target_rpm = max(0.0, min(4500.0, (self.state["cabinet_temp_c"] - 30.0) * 300.0))
+
+        # ANOMALY INJECTION: Fan Seizure (Mechanical Fault)
+        if self.state["active_anomaly"] == "FAN_FAILURE":
+            target_rpm = 0.0
+
+
         self.state["cooling_fan_rpm"] += (
             (target_rpm - self.state["cooling_fan_rpm"]) * 1.0 * delta_sec
         )
@@ -156,6 +226,9 @@ class EVCharger(Asset):
     def read_sensor(self, sensor_name: str, global_state: dict) -> float:
         is_active = self.state["charger_state"] in [1, 2, 3]
 
+        # Convert the string anomaly into a numeric label for ML (0=Normal, 1=Fan, 2=Arc, 3=Chatter)
+        # anomaly_map = {"NONE": 0.0, "FAN_FAILURE": 1.0, "CONNECTOR_ARCING": 2.0, "BMS_CHATTER": 3.0}
+
         match sensor_name:
             case "Grid_Voltage_AC":
                 return round(
@@ -169,11 +242,13 @@ class EVCharger(Asset):
                 )
                 return round(base_v + random.gauss(0, 0.5), 2)
             case "Output_Current_DC":
-                return (
-                    round(self.state["output_current_a"] + random.gauss(0, 0.5), 2)
-                    if self.state["output_current_a"] >= 1.0
-                    else 0.0
-                )
+                if self.state["output_current_a"] < 1.0:
+                    return 0.0
+
+                # ANOMALY INJECTION: Arcing causes massive variance on the high-speed electrical read
+                noise_multiplier = 5.0 if self.state["active_anomaly"] == "CONNECTOR_ARCING" else 0.5
+                return round(self.state["output_current_a"] + random.gauss(0, noise_multiplier), 2)
+
             case "Requested_Current_DC":
                 return round(self.state["requested_current_a"], 2)
             case "Cooling_Fan_RPM":
