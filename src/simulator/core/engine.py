@@ -91,6 +91,7 @@ class SimulationEngine:
                     global_state["rainfall_mm_hr"] = 25.0
                 else:
                     global_state["rainfall_mm_hr"] = 0.0
+                global_state["is_backfilling"] = is_backfilling
 
                 for asset in self.assets:
                     asset.tick(self.virtual_time, self.tick_rate_sec, global_state)

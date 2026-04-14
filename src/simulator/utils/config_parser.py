@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 import os
 from pathlib import Path
@@ -51,10 +52,17 @@ def _apply_sensor_overrides(asset: Asset, sensor_overrides: list[dict[str, Any]]
     for s_conf in sensor_overrides:
         s_name = s_conf["name"]
         if s_name in sensor_dict:
-            sensor_dict[s_name].update_interval_sec = float(
-                s_conf.get("interval", sensor_dict[s_name].update_interval_sec)
-            )
-            sensor_dict[s_name].jitter_sec = float(s_conf.get("jitter", 0.0))
+            sensor = sensor_dict[s_name]
+            sensor.update_interval_sec = float(s_conf.get("interval", sensor.update_interval_sec))
+            sensor.jitter_sec = float(s_conf.get("jitter", sensor.jitter_sec))
+            if "emit_on_change" in s_conf:
+                sensor.emit_on_change = bool(s_conf["emit_on_change"])
+            if "heartbeat_interval" in s_conf:
+                heartbeat = s_conf.get("heartbeat_interval")
+                sensor.heartbeat_interval_sec = None if heartbeat is None else float(heartbeat)
+            elif sensor.emit_on_change and sensor.heartbeat_interval_sec is None:
+                sensor.heartbeat_interval_sec = sensor.update_interval_sec
+            sensor.set_next_update(datetime.min, emitted=False)
         else:
             logger.warning("Unknown sensor override '%s' on %s", s_name, asset.name)
 

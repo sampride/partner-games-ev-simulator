@@ -46,10 +46,10 @@ class EVCharger(Asset):
             SensorConfig("Connector_Resistance_mOhm", 1.0, 0.0),
             SensorConfig("Derate_Level_Percent", 1.0, 0.0),
             SensorConfig("EV_State_of_Charge", 1.0, 0.0),
-            SensorConfig("Charger_State", 1.0, 0.0),
+            SensorConfig("Charger_State", 1.0, 0.0, emit_on_change=True, heartbeat_interval_sec=30.0),
             SensorConfig("Session_Duration", 1.0, 0.0),
-            SensorConfig("Warning_Code", 1.0, 0.0),
-            SensorConfig("Error_Code", 1.0, 0.0),
+            SensorConfig("Warning_Code", 1.0, 0.0, emit_on_change=True, heartbeat_interval_sec=30.0),
+            SensorConfig("Error_Code", 1.0, 0.0, emit_on_change=True, heartbeat_interval_sec=30.0),
         ]
 
         self._refresh_next_sensor_due()
@@ -414,15 +414,24 @@ class EVCharger(Asset):
             self.state[temp_key] = max(ambient_temp - 3.0, self.state[temp_key])
 
         if previous_state != self.state["charger_state"]:
-            logger.info(
-                "%s state %s -> %s (warning=%s error=%s derate=%.1f%%)",
-                self.name,
-                previous_state,
-                self.state["charger_state"],
-                self.state["warning_code"],
-                self.state["error_code"],
-                self.state["derate_level_pct"],
+            is_backfilling = bool(global_state.get("is_backfilling", False))
+            important_transition = (
+                self.state["charger_state"] == self.STATE_FAULT
+                or previous_state == self.STATE_FAULT
+                or self.state["error_code"] != self.ERROR_NONE
+                or self.state["warning_code"] != 0
+                or self.state["derate_level_pct"] >= 5.0
             )
+            if not is_backfilling or important_transition:
+                logger.info(
+                    "%s state %s -> %s (warning=%s error=%s derate=%.1f%%)",
+                    self.name,
+                    previous_state,
+                    self.state["charger_state"],
+                    self.state["warning_code"],
+                    self.state["error_code"],
+                    self.state["derate_level_pct"],
+                )
 
     def _apply_sensor_drift(self, value: float, sensor_group: str) -> float:
         if self.state["active_anomaly"] != "SENSOR_DRIFT":
