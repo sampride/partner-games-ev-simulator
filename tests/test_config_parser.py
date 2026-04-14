@@ -1,13 +1,32 @@
 from pathlib import Path
 
-from simulator.utils.config_parser import build_simulation_components, load_config
+import pytest
+
+from simulator.utils.config_parser import ConfigValidationError, build_simulation_components, validate_config
 
 
-def test_default_config_builds_non_mqtt_components() -> None:
-    config = load_config(Path("config/default_sim.yaml"))
-    config["writers"] = [w for w in config["writers"] if w["type"] != "mqtt"]
-    assets, writers, tick_rate = build_simulation_components(config, Path.cwd())
+def test_build_components(tmp_path: Path) -> None:
+    config = {
+        "simulation": {"tick_rate_sec": 0.1},
+        "writers": [
+            {"type": "csv", "config": {"output_dir": "out", "filename": "x.csv"}},
+        ],
+        "assets": [
+            {
+                "name": "SiteA",
+                "type": "ChargingSite",
+                "chargers": [{"name": "C1"}],
+            }
+        ],
+    }
 
-    assert assets
-    assert writers
-    assert tick_rate == 0.05
+    assets, writers, tick_rate = build_simulation_components(config, tmp_path)
+
+    assert len(assets) == 1
+    assert len(writers) == 1
+    assert tick_rate == 0.1
+
+
+def test_validate_config_rejects_invalid_tick_rate() -> None:
+    with pytest.raises(ConfigValidationError):
+        validate_config({"simulation": {"tick_rate_sec": 0}, "assets": [{"name": "a", "type": "ChargingSite"}]})

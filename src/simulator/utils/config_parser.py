@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 import logging
 import os
@@ -16,6 +18,11 @@ from simulator.writers.sensor_csv_writer import SensorCsvWriter
 
 logger = logging.getLogger("simulator.config")
 
+
+class ConfigValidationError(ValueError):
+    pass
+
+
 ASSET_REGISTRY: dict[str, type[Asset]] = {
     "ChargingSite": ChargingSite,
     "EVCharger": EVCharger,
@@ -31,7 +38,71 @@ WRITER_REGISTRY: dict[str, type[Writer]] = {
 def load_config(filepath: str | Path) -> dict[str, Any]:
     with open(filepath, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    return config or {}
+    loaded = config or {}
+    if not isinstance(loaded, dict):
+        raise ConfigValidationError("Top-level config must be a YAML mapping")
+    return loaded
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    simulation = config.get("simulation", {})
+    if simulation and not isinstance(simulation, dict):
+        raise ConfigValidationError("simulation must be a mapping")
+
+    tick_rate = float(simulation.get("tick_rate_sec", 0.5))
+    if tick_rate <= 0:
+        raise ConfigValidationError("simulation.tick_rate_sec must be > 0")
+
+    backfill_days = float(simulation.get("backfill_days", 0))
+    if backfill_days < 0:
+        raise ConfigValidationError("simulation.backfill_days must be >= 0")
+
+    run_mode = str(simulation.get("mode", "realtime")).lower()
+    if run_mode not in {"realtime", "history"}:
+        raise ConfigValidationError("simulation.mode must be 'realtime' or 'history'")
+
+    writers = config.get("writers", [])
+    if not isinstance(writers, list):
+        raise ConfigValidationError("writers must be a list")
+    for idx, writer_conf in enumerate(writers):
+        if not isinstance(writer_conf, dict):
+            raise ConfigValidationError(f"writers[{idx}] must be a mapping")
+        writer_type = writer_conf.get("type")
+        if writer_type not in WRITER_REGISTRY:
+            raise ConfigValidationError(f"Unknown writer type in config: {writer_type}")
+
+    assets = config.get("assets", [])
+    if not isinstance(assets, list) or not assets:
+        raise ConfigValidationError("assets must be a non-empty list")
+    for idx, asset_conf in enumerate(assets):
+        if not isinstance(asset_conf, dict):
+            raise ConfigValidationError(f"assets[{idx}] must be a mapping")
+        asset_name = asset_conf.get("name")
+        asset_type = asset_conf.get("type")
+        if not asset_name:
+            raise ConfigValidationError(f"assets[{idx}] is missing name")
+        if asset_type not in ASSET_REGISTRY:
+            raise ConfigValidationError(f"Unknown asset type in config: {asset_type}")
+        for sensor_conf in asset_conf.get("sensors", []):
+            _validate_sensor_override(sensor_conf, context=f"asset {asset_name}")
+        for charger_conf in asset_conf.get("chargers", []):
+            if not charger_conf.get("name"):
+                raise ConfigValidationError(f"charger on asset {asset_name} is missing name")
+            for sensor_conf in charger_conf.get("sensors", []):
+                _validate_sensor_override(sensor_conf, context=f"charger {charger_conf.get('name')}")
+
+
+def _validate_sensor_override(sensor_conf: dict[str, Any], context: str) -> None:
+    if not isinstance(sensor_conf, dict):
+        raise ConfigValidationError(f"Sensor override on {context} must be a mapping")
+    if not sensor_conf.get("name"):
+        raise ConfigValidationError(f"Sensor override on {context} is missing name")
+    interval = float(sensor_conf.get("interval", 1.0))
+    if interval <= 0:
+        raise ConfigValidationError(f"Sensor interval on {context} must be > 0")
+    heartbeat = sensor_conf.get("heartbeat_interval")
+    if heartbeat is not None and float(heartbeat) <= 0:
+        raise ConfigValidationError(f"Sensor heartbeat_interval on {context} must be > 0")
 
 
 def _apply_state_overrides(asset: Asset, state_overrides: dict[str, Any]) -> None:
@@ -70,10 +141,13 @@ def _apply_sensor_overrides(asset: Asset, sensor_overrides: list[dict[str, Any]]
 def build_simulation_components(
     config: dict[str, Any], project_root: Path
 ) -> tuple[list[Asset], list[Writer], float]:
+    validate_config(config)
+
     writers: list[Writer] = []
     for w_conf in config.get("writers", []):
         w_type = w_conf["type"]
         w_kwargs = dict(w_conf.get("config", {}))
+        fail_open = bool(w_kwargs.pop("fail_open", True))
 
         if "output_dir" in w_kwargs:
             out_dir = Path(w_kwargs["output_dir"])
@@ -83,11 +157,14 @@ def build_simulation_components(
         if w_type == "mqtt":
             w_kwargs["host"] = os.getenv("MQTT_HOST", w_kwargs.get("host", "localhost"))
 
-        if w_type not in WRITER_REGISTRY:
-            raise ValueError(f"Unknown writer type in config: {w_type}")
-
         writer_class = WRITER_REGISTRY[w_type]
-        writers.append(writer_class(**w_kwargs))
+        try:
+            writers.append(writer_class(**w_kwargs))
+        except Exception as exc:
+            if fail_open:
+                logger.warning("Writer '%s' could not be initialized and will be disabled: %s", w_type, exc)
+                continue
+            raise
 
     assets: list[Asset] = []
     for a_conf in config.get("assets", []):
@@ -95,9 +172,6 @@ def build_simulation_components(
         a_type = a_conf["type"]
         a_state_overrides = a_conf.get("state", {})
         a_sensor_overrides = a_conf.get("sensors", [])
-
-        if a_type not in ASSET_REGISTRY:
-            raise ValueError(f"Unknown asset type in config: {a_type}")
 
         if a_type == "ChargingSite":
             max_q = int(a_conf.get("max_queue", 3))

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -26,7 +28,7 @@ class SimulationEngine:
         history_end_time: datetime | None = None,
     ) -> None:
         self.assets = assets
-        self.writers = writers
+        self.writers = list(writers)
         self.state_manager = state_manager
         self.tick_rate_sec = tick_rate_sec
         self.backfill_log_interval_sec = backfill_log_interval_sec
@@ -36,6 +38,7 @@ class SimulationEngine:
         self.history_mode = history_mode
         self.history_end_time = history_end_time
         self._write_buffer: list[dict[str, Any]] = []
+        self._disabled_writers: set[int] = set()
 
         default_start = datetime.now() - timedelta(days=backfill_days)
         self.virtual_time = self.state_manager.load_runtime_state(self.assets, default_start)
@@ -43,6 +46,17 @@ class SimulationEngine:
         for asset in self.assets:
             if hasattr(asset, "_refresh_next_sensor_due"):
                 asset._refresh_next_sensor_due()
+
+    async def _write_with_writer(self, writer_index: int, writer: Writer, batch: list[dict[str, Any]]) -> None:
+        try:
+            await writer.write_batch(batch)
+        except Exception as exc:
+            self._disabled_writers.add(writer_index)
+            logger.exception("Disabling writer %s after batch failure: %s", writer.__class__.__name__, exc)
+            try:
+                await writer.close()
+            except Exception:
+                logger.debug("Ignored error while closing failed writer %s", writer.__class__.__name__, exc_info=True)
 
     async def _flush_buffer(self, is_backfilling: bool) -> None:
         if not self._write_buffer:
@@ -52,28 +66,49 @@ class SimulationEngine:
         self._write_buffer = []
         write_tasks = []
         active_writers = 0
-        for writer in self.writers:
+        for index, writer in enumerate(self.writers):
+            if index in self._disabled_writers:
+                continue
             if is_backfilling and not writer.supports_backfill():
                 continue
             if not is_backfilling and not writer.supports_realtime():
                 continue
             active_writers += 1
-            write_tasks.append(writer.write_batch(batch))
+            write_tasks.append(self._write_with_writer(index, writer, batch))
         if write_tasks:
             await asyncio.gather(*write_tasks)
         logger.debug("Flushed %d rows to %d writers", len(batch), active_writers)
 
+    async def _flush_and_close_writers(self) -> None:
+        close_tasks = []
+        for index, writer in enumerate(self.writers):
+            if index in self._disabled_writers:
+                continue
+            close_tasks.append(writer.flush())
+            close_tasks.append(writer.close())
+        results = await asyncio.gather(*close_tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("Writer shutdown encountered an error: %s", result)
+
     async def run(self) -> None:
-        logger.info("Starting simulation. Virtual time=%s", self.virtual_time.isoformat())
+        logger.info(
+            "Starting simulation. Virtual time=%s mode=%s assets=%d writers=%d",
+            self.virtual_time.isoformat(),
+            "history" if self.history_mode else "realtime",
+            len(self.assets),
+            len(self.writers) - len(self._disabled_writers),
+        )
         last_save_time = datetime.now()
         last_backfill_log_virtual = self.virtual_time
         last_realtime_log_real = datetime.now()
         last_buffer_flush_real = datetime.now()
 
-        global_state: dict[str, float] = {
+        global_state: dict[str, float | bool] = {
             "rainfall_mm_hr": 0.0,
             "ambient_temp_c": 20.0,
             "current_grid_voltage": 480.0,
+            "is_backfilling": False,
         }
 
         try:
@@ -119,27 +154,27 @@ class SimulationEngine:
                     if (self.virtual_time - last_backfill_log_virtual).total_seconds() >= self.backfill_log_interval_sec:
                         lag = (self.history_end_time - self.virtual_time) if self.history_mode and self.history_end_time else (now - self.virtual_time)
                         logger.info(
-                            "Backfill progress virtual=%s lag=%s tick_rows=%d buffered_rows=%d",
+                            "Backfill progress virtual=%s lag=%s tick_rows=%d buffered_rows=%d active_writers=%d",
                             self.virtual_time.isoformat(),
                             str(lag).split(".")[0],
                             tick_rows,
                             len(self._write_buffer),
+                            len(self.writers) - len(self._disabled_writers),
                         )
                         last_backfill_log_virtual = self.virtual_time
                     self.virtual_time += timedelta(seconds=self.tick_rate_sec)
                 else:
                     if (real_now - last_realtime_log_real).total_seconds() >= self.realtime_log_interval_sec:
                         logger.info(
-                            "Realtime heartbeat virtual=%s tick_rows=%d buffered_rows=%d writers=%d",
+                            "Realtime heartbeat virtual=%s tick_rows=%d buffered_rows=%d active_writers=%d",
                             self.virtual_time.isoformat(),
                             tick_rows,
                             len(self._write_buffer),
-                            len(self.writers),
+                            len(self.writers) - len(self._disabled_writers),
                         )
                         last_realtime_log_real = real_now
                     self.virtual_time = datetime.now()
                     await asyncio.sleep(self.tick_rate_sec)
         finally:
             await self._flush_buffer(is_backfilling=self.history_mode or self.virtual_time < datetime.now())
-            await asyncio.gather(*(writer.flush() for writer in self.writers), return_exceptions=True)
-            await asyncio.gather(*(writer.close() for writer in self.writers), return_exceptions=True)
+            await self._flush_and_close_writers()

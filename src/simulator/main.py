@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from simulator.core.engine import SimulationEngine
-from simulator.utils.config_parser import build_simulation_components, load_config
+from simulator.utils.config_parser import ConfigValidationError, build_simulation_components, load_config, validate_config
 from simulator.utils.state import StateManager
 
 log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -49,7 +49,13 @@ async def main() -> None:
     if not config_path.exists():
         raise FileNotFoundError(f"Could not find config file at {config_path}")
 
-    config_dict = load_config(config_path)
+    try:
+        config_dict = load_config(config_path)
+        validate_config(config_dict)
+    except ConfigValidationError as exc:
+        logger.error("Configuration is invalid: %s", exc)
+        raise
+
     sim_config = config_dict.get("simulation", {})
     backfill_days = int(sim_config.get("backfill_days", 3))
     tick_rate = float(sim_config.get("tick_rate_sec", 0.5))
@@ -61,8 +67,18 @@ async def main() -> None:
     history_end_time = _resolve_history_end_time(sim_config)
 
     assets, writers, _ = build_simulation_components(config_dict, project_root)
+    if not writers:
+        logger.warning("No writers were initialized. The simulator will run without external outputs.")
     state_manager = StateManager(filepath=state_file_path)
 
+    logger.info(
+        "Runtime settings mode=%s tick_rate=%.3fs backfill_days=%d data_dir=%s state_file=%s",
+        "history" if history_mode else "realtime",
+        tick_rate,
+        backfill_days,
+        data_dir,
+        state_file_path,
+    )
     if history_mode:
         logger.info("History generation mode enabled. End time=%s", history_end_time.isoformat() if history_end_time else "immediate")
 

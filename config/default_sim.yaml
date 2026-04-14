@@ -66,7 +66,7 @@
 
 simulation:
   tick_rate_sec: 0.05
-  backfill_days: 3
+  backfill_days: 0.3
   backfill_log_interval_sec: 300
   realtime_log_interval_sec: 30
   write_buffer_max_rows: 15000
@@ -106,6 +106,7 @@ writers:
       reconnect_min_delay: 1
       reconnect_max_delay: 60
       boot_backoff_max: 30.0
+      fail_open: true
 
 assets:
   - name: "Site_Melbourne_North"
