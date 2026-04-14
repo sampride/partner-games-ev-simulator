@@ -19,7 +19,7 @@ class SimulationEngine:
         writers: list[Writer],
         state_manager: StateManager,
         tick_rate_sec: float = 0.5,
-        backfill_days: int = 3,
+        backfill_days: float = 3.0,
         backfill_log_interval_sec: float = 300.0,
         realtime_log_interval_sec: float = 30.0,
         write_buffer_max_rows: int = 10000,

@@ -24,6 +24,7 @@ class MqttWriter:
         reconnect_min_delay: int = 1,
         reconnect_max_delay: int = 60,
         boot_backoff_max: float = 30.0,
+        max_rows_per_message: int = 100,
     ) -> None:
         self.host = host
         self.port = port
@@ -31,6 +32,7 @@ class MqttWriter:
         self.allow_backfill = allow_backfill
         self.allow_realtime = allow_realtime
         self.boot_backoff_max = boot_backoff_max
+        self.max_rows_per_message = max(1, int(max_rows_per_message))
         self.is_connected = False
         self.buffer: deque[dict[str, list[dict[str, Any]]]] = deque(maxlen=max_buffer_size)
 
@@ -106,8 +108,20 @@ class MqttWriter:
     def _publish_grouped_data(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
         for asset_name, rows in payloads_by_asset.items():
             topic = f"{self.base_topic}/{asset_name}"
-            payload = json.dumps(rows)
-            self.client.publish(topic, payload, qos=0)
+            for start in range(0, len(rows), self.max_rows_per_message):
+                chunk = rows[start : start + self.max_rows_per_message]
+                payload = json.dumps(chunk)
+                info = self.client.publish(topic, payload, qos=0)
+                rc = getattr(info, "rc", 0)
+                if rc != 0:
+                    logger.warning(
+                        "MQTT publish failed topic=%s rc=%s rows=%d",
+                        topic,
+                        rc,
+                        len(chunk),
+                    )
+                else:
+                    logger.debug("MQTT published topic=%s rows=%d", topic, len(chunk))
 
     async def flush(self) -> None:
         return

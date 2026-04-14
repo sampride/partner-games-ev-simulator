@@ -57,7 +57,7 @@ async def main() -> None:
         raise
 
     sim_config = config_dict.get("simulation", {})
-    backfill_days = int(sim_config.get("backfill_days", 3))
+    backfill_days = float(sim_config.get("backfill_days", 3.0))
     tick_rate = float(sim_config.get("tick_rate_sec", 0.5))
     backfill_log_interval_sec = float(sim_config.get("backfill_log_interval_sec", 300.0))
     realtime_log_interval_sec = float(sim_config.get("realtime_log_interval_sec", 30.0))
@@ -72,7 +72,7 @@ async def main() -> None:
     state_manager = StateManager(filepath=state_file_path)
 
     logger.info(
-        "Runtime settings mode=%s tick_rate=%.3fs backfill_days=%d data_dir=%s state_file=%s",
+        "Runtime settings mode=%s tick_rate=%.3fs backfill_days=%.3f data_dir=%s state_file=%s",
         "history" if history_mode else "realtime",
         tick_rate,
         backfill_days,
