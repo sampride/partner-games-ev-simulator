@@ -1,0 +1,24 @@
+{
+  "note": "Starter example only. Adjust field names to match the exact Adapter for MQTT version and API/UI in use.",
+  "componentType": "AdapterForMqtt",
+  "componentId": "mqtt-ev-sim",
+  "description": "Hackathon EV charger simulator - generic MQTT source",
+  "dataSource": {
+    "name": "ev-sim-broker",
+    "brokerHost": "mqtt-broker",
+    "brokerPort": 1883,
+    "protocol": "Tcp",
+    "topic": "ev_network/Site_Melbourne_North/+/+",
+    "qos": 0,
+    "retain": false,
+    "username": "",
+    "password": ""
+  },
+  "dataSelection": {
+    "mode": "Generic",
+    "topicPattern": "ev_network/Site_Melbourne_North/{deviceId}/{metricName}",
+    "timestampField": "$.timestamp",
+    "timestampFormat": "yyyy-MM-dd'T'HH:mm:ss.ffffff",
+    "valueField": "$.value"
+  }
+}
