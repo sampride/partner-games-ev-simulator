@@ -39,6 +39,9 @@ class SimulationEngine:
         self.history_end_time = history_end_time
         self._write_buffer: list[dict[str, Any]] = []
         self._disabled_writers: set[int] = set()
+        self._realtime_immediate_writer_indexes: set[int] = {
+            idx for idx, writer in enumerate(self.writers) if getattr(writer, "prefer_realtime_immediate", False)
+        }
 
         default_start = datetime.now() - timedelta(days=backfill_days)
         self.virtual_time = self.state_manager.load_runtime_state(self.assets, default_start)
@@ -58,6 +61,20 @@ class SimulationEngine:
             except Exception:
                 logger.debug("Ignored error while closing failed writer %s", writer.__class__.__name__, exc_info=True)
 
+    async def _write_realtime_immediate(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        write_tasks = []
+        for index in sorted(self._realtime_immediate_writer_indexes):
+            if index in self._disabled_writers:
+                continue
+            writer = self.writers[index]
+            if not writer.supports_realtime():
+                continue
+            write_tasks.append(self._write_with_writer(index, writer, rows))
+        if write_tasks:
+            await asyncio.gather(*write_tasks)
+
     async def _flush_buffer(self, is_backfilling: bool) -> None:
         if not self._write_buffer:
             return
@@ -69,6 +86,8 @@ class SimulationEngine:
         for index, writer in enumerate(self.writers):
             if index in self._disabled_writers:
                 continue
+            if not is_backfilling and index in self._realtime_immediate_writer_indexes:
+                continue
             if is_backfilling and not writer.supports_backfill():
                 continue
             if not is_backfilling and not writer.supports_realtime():
@@ -77,7 +96,7 @@ class SimulationEngine:
             write_tasks.append(self._write_with_writer(index, writer, batch))
         if write_tasks:
             await asyncio.gather(*write_tasks)
-        logger.debug("Flushed %d rows to %d writers", len(batch), active_writers)
+        logger.debug("Flushed %d rows to %d buffered writers", len(batch), active_writers)
 
     async def _flush_and_close_writers(self) -> None:
         close_tasks = []
@@ -132,10 +151,18 @@ class SimulationEngine:
                     asset.tick(self.virtual_time, self.tick_rate_sec, global_state)
 
                 tick_rows = 0
+                realtime_immediate_rows: list[dict[str, Any]] = []
                 for asset in self.assets:
                     rows = asset.flush_data()
                     tick_rows += len(rows)
+                    if not rows:
+                        continue
+                    if not is_backfilling and self._realtime_immediate_writer_indexes:
+                        realtime_immediate_rows.extend(rows)
                     self._write_buffer.extend(rows)
+
+                if realtime_immediate_rows:
+                    await self._write_realtime_immediate(realtime_immediate_rows)
 
                 real_now = datetime.now()
                 buffer_age = (real_now - last_buffer_flush_real).total_seconds()

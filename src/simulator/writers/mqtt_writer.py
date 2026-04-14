@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from typing import Any
 
@@ -26,6 +27,7 @@ class MqttWriter:
         boot_backoff_max: float = 30.0,
         max_rows_per_message: int = 100,
     ) -> None:
+        self.prefer_realtime_immediate = True
         self.host = host
         self.port = port
         self.base_topic = base_topic.strip("/")
@@ -35,6 +37,10 @@ class MqttWriter:
         self.max_rows_per_message = max(1, int(max_rows_per_message))
         self.is_connected = False
         self.buffer: deque[dict[str, list[dict[str, Any]]]] = deque(maxlen=max_buffer_size)
+        self._published_messages = 0
+        self._published_rows = 0
+        self._publish_log_interval_sec = 30.0
+        self._last_publish_log_time = time.monotonic()
 
         if mqtt is None:
             raise RuntimeError(
@@ -61,7 +67,9 @@ class MqttWriter:
                 len(self.buffer),
             )
         else:
-            logger.warning("MQTT connection refused by %s:%s code=%s", self.host, self.port, reason_code)
+            logger.warning(
+                "MQTT connection refused by %s:%s code=%s", self.host, self.port, reason_code
+            )
 
     def _on_disconnect(
         self, client: Any, userdata: Any, disconnect_flags: Any, reason_code: Any, properties: Any
@@ -82,28 +90,32 @@ class MqttWriter:
                 backoff = min(backoff * 2, self.boot_backoff_max)
 
     async def write_batch(self, data: list[dict[str, Any]]) -> None:
-        if not data:
-            return
         payloads_by_asset: dict[str, list[dict[str, Any]]] = {}
         for row in data:
             asset_name = str(row.get("asset", "unknown_asset"))
             payloads_by_asset.setdefault(asset_name, []).append(row)
 
         if not self.is_connected:
-            self.buffer.append(payloads_by_asset)
-            if len(self.buffer) == self.buffer.maxlen:
-                logger.warning("MQTT buffer is full; oldest batches will be dropped.")
+            if payloads_by_asset:
+                self.buffer.append(payloads_by_asset)
+                if len(self.buffer) == self.buffer.maxlen:
+                    logger.warning("MQTT buffer is full; oldest batches will be dropped.")
             return
 
+        await self._drain_buffered_batches()
+
+        if payloads_by_asset:
+            self._publish_grouped_data(payloads_by_asset)
+
+        self._maybe_log_publish_summary()
+
+    async def _drain_buffered_batches(self) -> None:
         flush_limit = 20
         flushed = 0
         while self.buffer and self.is_connected and flushed < flush_limit:
             old_payloads = self.buffer.popleft()
             self._publish_grouped_data(old_payloads)
             flushed += 1
-
-        if self.is_connected:
-            self._publish_grouped_data(payloads_by_asset)
 
     def _publish_grouped_data(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
         for asset_name, rows in payloads_by_asset.items():
@@ -121,10 +133,29 @@ class MqttWriter:
                         len(chunk),
                     )
                 else:
+                    self._published_messages += 1
+                    self._published_rows += len(chunk)
                     logger.debug("MQTT published topic=%s rows=%d", topic, len(chunk))
 
+    def _maybe_log_publish_summary(self) -> None:
+        now = time.monotonic()
+        if now - self._last_publish_log_time < self._publish_log_interval_sec:
+            return
+        logger.info(
+            "MQTT publish heartbeat messages=%d rows=%d buffered_batches=%d connected=%s",
+            self._published_messages,
+            self._published_rows,
+            len(self.buffer),
+            self.is_connected,
+        )
+        self._published_messages = 0
+        self._published_rows = 0
+        self._last_publish_log_time = now
+
     async def flush(self) -> None:
-        return
+        if self.is_connected and self.buffer:
+            await self._drain_buffered_batches()
+            self._maybe_log_publish_summary()
 
     async def close(self) -> None:
         if self.client is not None:

@@ -66,7 +66,7 @@
 
 simulation:
   tick_rate_sec: 0.05
-  backfill_days: 0.3
+  backfill_days: 0.2
   backfill_log_interval_sec: 300
   realtime_log_interval_sec: 30
   write_buffer_max_rows: 15000
