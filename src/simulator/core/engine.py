@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from datetime import datetime, timedelta
 
 from simulator.models.base import Asset
 from simulator.utils.state import StateManager
 from simulator.writers.base import Writer
+
+logger = logging.getLogger("simulator.engine")
 
 class SimulationEngine:
     def __init__(

@@ -1,19 +1,31 @@
 import os
 import asyncio
+import logging
 from pathlib import Path
 
 from simulator.core.engine import SimulationEngine
 from simulator.utils.config_parser import load_config, build_simulation_components
 from simulator.utils.state import StateManager
 
+# 1. Configure the Central Logger
+log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("simulator.main")
+
 async def main() -> None:
 
-    print("Initializing Partner Games Simulator...")
+    logger.info("Initializing Partner Games Simulator...")
 
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent.parent
 
-    # 1. Use Environment Variables for paths, falling back to local dev folders
+    # Use Environment Variables for paths, falling back to local dev folders
     config_path = Path(os.getenv("SIM_CONFIG_PATH", project_root / "config" / "default_sim.yaml"))
     data_dir = Path(os.getenv("SIM_DATA_PATH", project_root / "data"))
 
@@ -21,8 +33,9 @@ async def main() -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     state_file_path = data_dir / "simulator_cursor.json"
 
-    print(f"Loading configuration from {config_path}...")
+    logger.info(f"Loading configuration from {config_path}...")
     if not config_path.exists():
+        logger.critical(f"CRITICAL: Could not find the config file at {config_path}")
         raise FileNotFoundError(f"CRITICAL: Could not find the config file at {config_path}")
 
     # Load configuration
@@ -53,7 +66,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         # Save exact cursor on graceful exit
         engine.state_manager.save_cursor(engine.virtual_time)
-        print("\nSimulation stopped cleanly.")
+        logger.info("Simulation stopped cleanly.")
 
 if __name__ == "__main__":
     asyncio.run(main())

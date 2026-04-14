@@ -1,5 +1,3 @@
-readme_content = """# ⚡ Partner Games Simulator: EV Charging Hub
-
 ## Overview
 The Partner Games Simulator is a high-performance, asynchronous Python 3.13 engine designed to generate realistic, multivariate IoT telemetry for Machine Learning anomaly detection hackathons (specifically targeting platforms like TwinThread). 
 

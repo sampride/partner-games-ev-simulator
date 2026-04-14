@@ -1,3 +1,4 @@
+import math
 import random
 from datetime import datetime
 from simulator.models.base import Asset, SensorConfig
@@ -13,7 +14,7 @@ class EVCharger(Asset):
             SensorConfig("Output_Voltage_DC", 0.05, 0.0),
             SensorConfig("Output_Current_DC", 0.05, 0.0),
             SensorConfig("Requested_Current_DC", 0.05, 0.0),
-            # Mechanical & Cooling (2Hz)
+            # Mechanical & Cooling (2 Hz)
             SensorConfig("Cooling_Fan_RPM", 0.5, 0.0),
             SensorConfig("Coolant_Flow_LPM", 0.5, 0.0),
             SensorConfig("Coolant_Pressure_kPa", 0.5, 0.0),
