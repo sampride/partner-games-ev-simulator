@@ -10,6 +10,7 @@ from simulator.models.ev_charger import EVCharger
 # from simulator.models.sump_station import SumpStation # Kept for rollback
 from simulator.writers.base import Writer
 from simulator.writers.csv_writer import CsvWriter
+from simulator.writers.sensor_csv_writer import SensorCsvWriter
 from simulator.writers.mqtt_writer import MqttWriter
 
 ASSET_REGISTRY: dict[str, type[Asset]] = {
@@ -18,7 +19,11 @@ ASSET_REGISTRY: dict[str, type[Asset]] = {
     # "SumpStation": SumpStation
 }
 
-WRITER_REGISTRY: dict[str, type[Writer]] = {"csv": CsvWriter, "mqtt": MqttWriter}
+WRITER_REGISTRY: dict[str, type[Writer]] = {
+    "csv": CsvWriter,
+    "mqtt": MqttWriter,
+    "csv_per_sensor": SensorCsvWriter,
+}
 
 
 def load_config(filepath: str | Path) -> dict[str, Any]:
@@ -72,11 +77,9 @@ def build_simulation_components(
             if not out_dir.is_absolute():
                 w_kwargs["output_dir"] = str(project_root / out_dir)
 
-
         if w_type == "mqtt":
             # This overrides the YAML's 'host' key if the Docker ENV variable exists
             w_kwargs["host"] = os.getenv("MQTT_HOST", w_kwargs.get("host", "localhost"))
-
 
         if w_type in WRITER_REGISTRY:
             writer_class = WRITER_REGISTRY[w_type]
