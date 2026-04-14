@@ -25,6 +25,7 @@ class ChargingSite(Asset):
             SensorConfig("number_of_active_sessions", update_interval_sec=1.0),
             SensorConfig("ambient_temp_c", update_interval_sec=60.0),
         ]
+        self._refresh_next_sensor_due()
 
         self.state: dict[str, Any] = {
             "internal_queue_length": 0,
@@ -47,7 +48,6 @@ class ChargingSite(Asset):
             charger.tick(current_time, delta_sec, global_state)
             self._pending_data.extend(charger.flush_data())
 
-        # recalculate after children have updated
         total_power = sum(c.state["input_power_kw"] for c in self.chargers)
         active_sessions = sum(
             1
@@ -64,16 +64,7 @@ class ChargingSite(Asset):
             100.0, (total_power / max(1.0, self.state["transformer_rating_kw"])) * 100.0
         )
 
-        for sensor in self.sensors:
-            if sensor.should_update(current_time):
-                payload = {
-                    "timestamp": current_time.isoformat(),
-                    "asset": self.name,
-                    "sensor": sensor.name,
-                    "value": self.read_sensor(sensor.name, global_state),
-                }
-                self._pending_data.append(payload)
-                sensor.set_next_update(current_time)
+        self._emit_due_sensors(current_time, global_state)
 
     def update_internal_state(
         self, delta_sec: float, current_time: datetime, global_state: dict[str, Any]

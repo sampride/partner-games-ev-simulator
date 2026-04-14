@@ -19,7 +19,7 @@ class SensorConfig:
 
     def set_next_update(self, current_time: datetime) -> None:
         jitter = random.uniform(-self.jitter_sec, self.jitter_sec)
-        self.next_update = current_time + timedelta(seconds=self.update_interval_sec + jitter)
+        self.next_update = current_time + timedelta(seconds=max(0.001, self.update_interval_sec + jitter))
 
 
 class Asset:
@@ -30,22 +30,37 @@ class Asset:
         self.state: dict[str, Any] = {}
         self.sensors: list[SensorConfig] = []
         self._pending_data: list[dict[str, Any]] = []
+        self._next_sensor_due: datetime = datetime.min
 
-    def tick(self, current_time: datetime, delta_sec: float, global_state: dict[str, Any]) -> None:
-        # Pass the global state down to the physics engine
-        self.update_internal_state(delta_sec, current_time, global_state)
+    def _refresh_next_sensor_due(self) -> None:
+        if self.sensors:
+            self._next_sensor_due = min(sensor.next_update for sensor in self.sensors)
+        else:
+            self._next_sensor_due = datetime.max
 
+    def _emit_due_sensors(self, current_time: datetime, global_state: dict[str, Any]) -> None:
+        if not self.sensors or current_time < self._next_sensor_due:
+            return
+
+        next_due = datetime.max
         for sensor in self.sensors:
             if sensor.should_update(current_time):
                 payload: dict[str, Any] = {
                     "timestamp": current_time.isoformat(),
                     "asset": self.name,
                     "sensor": sensor.name,
-                    # Pass the global state down to the sensor reader
                     "value": self.read_sensor(sensor.name, global_state),
                 }
                 self._pending_data.append(payload)
                 sensor.set_next_update(current_time)
+            if sensor.next_update < next_due:
+                next_due = sensor.next_update
+
+        self._next_sensor_due = next_due
+
+    def tick(self, current_time: datetime, delta_sec: float, global_state: dict[str, Any]) -> None:
+        self.update_internal_state(delta_sec, current_time, global_state)
+        self._emit_due_sensors(current_time, global_state)
 
     def update_internal_state(
         self, delta_sec: float, current_time: datetime, global_state: dict[str, Any]

@@ -52,6 +52,8 @@ class EVCharger(Asset):
             SensorConfig("Error_Code", 1.0, 0.0),
         ]
 
+        self._refresh_next_sensor_due()
+
         self.state: dict[str, Any] = {
             "charger_state": self.STATE_IDLE,
             "error_code": self.ERROR_NONE,

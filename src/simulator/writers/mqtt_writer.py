@@ -109,6 +109,13 @@ class MqttWriter:
             payload = json.dumps(rows)
             self.client.publish(topic, payload, qos=0)
 
+    async def flush(self) -> None:
+        return
+
+    async def close(self) -> None:
+        if self.client is not None:
+            self.client.loop_stop()
+
     def supports_backfill(self) -> bool:
         return self.allow_backfill
 

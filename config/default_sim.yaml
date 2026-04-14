@@ -1,44 +1,44 @@
 .standard_charger_sensors: &standard_charger_sensors
   - name: "Grid_Voltage_AC"
-    interval: 0.05
-  - name: "Grid_Current_AC"
-    interval: 0.2
-  - name: "Input_Power_kW"
-    interval: 0.2
-  - name: "DC_Bus_Voltage"
     interval: 0.1
+  - name: "Grid_Current_AC"
+    interval: 0.5
+  - name: "Input_Power_kW"
+    interval: 0.5
+  - name: "DC_Bus_Voltage"
+    interval: 0.2
   - name: "Output_Voltage_DC"
-    interval: 0.05
+    interval: 0.1
   - name: "Output_Current_DC"
-    interval: 0.05
+    interval: 0.1
   - name: "Requested_Current_DC"
-    interval: 0.05
+    interval: 0.1
   - name: "Cooling_Fan_RPM"
-    interval: 0.5
+    interval: 1.0
   - name: "Pump_Speed_RPM"
-    interval: 0.5
+    interval: 1.0
   - name: "Coolant_Flow_LPM"
-    interval: 0.5
+    interval: 1.0
   - name: "Coolant_Pressure_kPa"
-    interval: 0.5
+    interval: 1.0
   - name: "Coolant_Inlet_Temp"
-    interval: 1.0
+    interval: 5.0
   - name: "Coolant_Outlet_Temp"
-    interval: 1.0
+    interval: 5.0
   - name: "Ambient_Temp"
-    interval: 2.0
+    interval: 10.0
   - name: "Cabinet_Temp"
-    interval: 1.0
+    interval: 5.0
   - name: "Power_Module_Temp"
-    interval: 1.0
+    interval: 5.0
   - name: "Cable_Connector_Temp"
-    interval: 1.0
+    interval: 5.0
   - name: "Connector_Resistance_mOhm"
-    interval: 1.0
+    interval: 5.0
   - name: "Derate_Level_Percent"
     interval: 1.0
   - name: "EV_State_of_Charge"
-    interval: 1.0
+    interval: 5.0
   - name: "Charger_State"
     interval: 1.0
   - name: "Session_Duration"
@@ -52,7 +52,7 @@
   - name: "site_total_power_kw"
     interval: 1.0
   - name: "site_grid_voltage_v"
-    interval: 0.5
+    interval: 1.0
   - name: "site_ac_current_a"
     interval: 1.0
   - name: "site_power_available_kw"
@@ -69,12 +69,20 @@ simulation:
   backfill_days: 3
   backfill_log_interval_sec: 300
   realtime_log_interval_sec: 30
+  write_buffer_max_rows: 15000
+  write_buffer_max_age_sec: 2.0
+  mode: "realtime"
+  # history mode options:
+  # mode: "history"
+  # history_end_time: "2026-04-14T00:00:00"
+  # history_duration_days: 7
 
 writers:
   - type: csv_per_sensor
     config:
       output_dir: "/data/split_sensors"
       max_size_mb: 25.0
+      flush_every_batches: 8
       allow_backfill: true
       allow_realtime: true
 
@@ -83,6 +91,7 @@ writers:
       output_dir: "/data/unified"
       filename: "ev_history.csv"
       max_size_mb: 25.0
+      flush_every_batches: 8
       allow_backfill: true
       allow_realtime: true
 
