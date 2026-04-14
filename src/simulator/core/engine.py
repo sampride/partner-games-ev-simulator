@@ -38,7 +38,7 @@ class SimulationEngine:
         self._write_buffer: list[dict[str, Any]] = []
 
         default_start = datetime.now() - timedelta(days=backfill_days)
-        self.virtual_time = self.state_manager.load_cursor(default_start)
+        self.virtual_time = self.state_manager.load_runtime_state(self.assets, default_start)
 
         for asset in self.assets:
             if hasattr(asset, "_refresh_next_sensor_due"):
@@ -112,7 +112,7 @@ class SimulationEngine:
                     last_buffer_flush_real = real_now
 
                 if (real_now - last_save_time).total_seconds() >= 1.0:
-                    self.state_manager.save_cursor(self.virtual_time)
+                    self.state_manager.save_runtime_state(self.virtual_time, self.assets)
                     last_save_time = real_now
 
                 if is_backfilling:

@@ -41,6 +41,9 @@ class ChargingSite(Asset):
     def add_charger(self, charger: EVCharger) -> None:
         self.chargers.append(charger)
 
+    def get_child_assets(self) -> list[Asset]:
+        return list(self.chargers)
+
     def tick(self, current_time: datetime, delta_sec: float, global_state: dict[str, Any]) -> None:
         self.update_internal_state(delta_sec, current_time, global_state)
 

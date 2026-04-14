@@ -107,3 +107,58 @@ class Asset:
         data = self._pending_data
         self._pending_data = []
         return data
+
+    def get_child_assets(self) -> list["Asset"]:
+        return []
+
+    def snapshot_runtime_state(self) -> dict[str, Any]:
+        sensor_snapshots: list[dict[str, Any]] = []
+        for sensor in self.sensors:
+            sensor_snapshots.append(
+                {
+                    "name": sensor.name,
+                    "next_update": sensor.next_update.isoformat(),
+                    "last_emitted_value": sensor.last_emitted_value,
+                    "has_emitted_value": sensor.has_emitted_value,
+                    "last_emitted_at": sensor.last_emitted_at.isoformat() if sensor.last_emitted_at != datetime.min else None,
+                }
+            )
+
+        return {
+            "name": self.name,
+            "type": self.__class__.__name__,
+            "state": dict(self.state),
+            "sensors": sensor_snapshots,
+            "children": [child.snapshot_runtime_state() for child in self.get_child_assets()],
+        }
+
+    def restore_runtime_state(self, snapshot: dict[str, Any]) -> None:
+        snapshot_state = snapshot.get("state", {})
+        if isinstance(snapshot_state, dict):
+            for key, value in snapshot_state.items():
+                if key in self.state:
+                    self.state[key] = value
+
+        sensor_map = {sensor.name: sensor for sensor in self.sensors}
+        for sensor_snapshot in snapshot.get("sensors", []):
+            sensor = sensor_map.get(str(sensor_snapshot.get("name", "")))
+            if sensor is None:
+                continue
+            next_update_raw = sensor_snapshot.get("next_update")
+            if next_update_raw:
+                try:
+                    sensor.next_update = datetime.fromisoformat(str(next_update_raw))
+                except ValueError:
+                    pass
+            sensor.last_emitted_value = sensor_snapshot.get("last_emitted_value")
+            sensor.has_emitted_value = bool(sensor_snapshot.get("has_emitted_value", False))
+            last_emitted_at_raw = sensor_snapshot.get("last_emitted_at")
+            if last_emitted_at_raw:
+                try:
+                    sensor.last_emitted_at = datetime.fromisoformat(str(last_emitted_at_raw))
+                except ValueError:
+                    sensor.last_emitted_at = datetime.min
+            else:
+                sensor.last_emitted_at = datetime.min
+
+        self._refresh_next_sensor_due()

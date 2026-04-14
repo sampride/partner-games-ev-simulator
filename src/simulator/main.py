@@ -83,8 +83,8 @@ async def main() -> None:
     try:
         await engine.run()
     finally:
-        engine.state_manager.save_cursor(engine.virtual_time)
-        logger.info("Simulation cursor saved to %s", state_file_path)
+        engine.state_manager.save_runtime_state(engine.virtual_time, engine.assets)
+        logger.info("Simulation state saved to %s", state_file_path)
 
 
 if __name__ == "__main__":
