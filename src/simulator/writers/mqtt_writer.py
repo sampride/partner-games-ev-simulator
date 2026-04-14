@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from collections import deque
-from typing import Any
+from typing import Any, Iterable
 
 logger = logging.getLogger("simulator.writers.mqtt")
 
@@ -26,6 +26,10 @@ class MqttWriter:
         reconnect_max_delay: int = 60,
         boot_backoff_max: float = 30.0,
         max_rows_per_message: int = 100,
+        payload_mode: str = "batched_array",
+        timestamp_field: str = "timestamp",
+        value_field: str = "value",
+        include_sensor_in_payload: bool = False,
     ) -> None:
         self.prefer_realtime_immediate = True
         self.host = host
@@ -35,6 +39,15 @@ class MqttWriter:
         self.allow_realtime = allow_realtime
         self.boot_backoff_max = boot_backoff_max
         self.max_rows_per_message = max(1, int(max_rows_per_message))
+        self.payload_mode = str(payload_mode).strip().lower()
+        self.timestamp_field = str(timestamp_field)
+        self.value_field = str(value_field)
+        self.include_sensor_in_payload = bool(include_sensor_in_payload)
+        valid_payload_modes = {"batched_array", "single_object_per_asset", "single_object_per_signal"}
+        if self.payload_mode not in valid_payload_modes:
+            raise ValueError(
+                f"Unsupported MQTT payload_mode '{self.payload_mode}'. Expected one of {sorted(valid_payload_modes)}"
+            )
         self.is_connected = False
         self.buffer: deque[dict[str, list[dict[str, Any]]]] = deque(maxlen=max_buffer_size)
         self._published_messages = 0
@@ -118,24 +131,75 @@ class MqttWriter:
             flushed += 1
 
     def _publish_grouped_data(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
+        if self.payload_mode == "batched_array":
+            self._publish_batched_array(payloads_by_asset)
+            return
+        if self.payload_mode == "single_object_per_asset":
+            self._publish_single_object_per_asset(payloads_by_asset)
+            return
+        self._publish_single_object_per_signal(payloads_by_asset)
+
+    def _publish_batched_array(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
         for asset_name, rows in payloads_by_asset.items():
-            topic = f"{self.base_topic}/{asset_name}"
+            topic = self._asset_topic(asset_name)
             for start in range(0, len(rows), self.max_rows_per_message):
                 chunk = rows[start : start + self.max_rows_per_message]
-                payload = json.dumps(chunk)
-                info = self.client.publish(topic, payload, qos=0)
-                rc = getattr(info, "rc", 0)
-                if rc != 0:
-                    logger.warning(
-                        "MQTT publish failed topic=%s rc=%s rows=%d",
-                        topic,
-                        rc,
-                        len(chunk),
-                    )
-                else:
-                    self._published_messages += 1
-                    self._published_rows += len(chunk)
-                    logger.debug("MQTT published topic=%s rows=%d", topic, len(chunk))
+                self._publish_payload(topic, chunk, len(chunk))
+
+    def _publish_single_object_per_asset(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
+        grouped: dict[tuple[str, str], dict[str, Any]] = {}
+        for asset_name, rows in payloads_by_asset.items():
+            for row in rows:
+                timestamp = str(row.get("timestamp", ""))
+                key = (asset_name, timestamp)
+                payload = grouped.setdefault(key, {self.timestamp_field: timestamp})
+                sensor_name = str(row.get("sensor", "unknown_sensor"))
+                payload[sensor_name] = row.get("value")
+
+        for (asset_name, _timestamp), payload in grouped.items():
+            topic = self._asset_topic(asset_name)
+            self._publish_payload(topic, payload, 1)
+
+    def _publish_single_object_per_signal(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:
+        for asset_name, rows in payloads_by_asset.items():
+            asset_topic = self._asset_topic(asset_name)
+            for row in rows:
+                sensor_name = str(row.get("sensor", "unknown_sensor"))
+                topic = f"{asset_topic}/{sensor_name}"
+                payload: dict[str, Any] = {
+                    self.timestamp_field: row.get("timestamp"),
+                    self.value_field: row.get("value"),
+                }
+                if self.include_sensor_in_payload:
+                    payload["sensor"] = sensor_name
+                    payload["asset"] = asset_name
+                self._publish_payload(topic, payload, 1)
+
+
+    def _asset_topic(self, asset_name: str) -> str:
+        asset_name = asset_name.strip("/")
+        if not self.base_topic:
+            return asset_name
+        base_tail = self.base_topic.rsplit("/", 1)[-1]
+        if base_tail == asset_name:
+            return self.base_topic
+        return f"{self.base_topic}/{asset_name}"
+
+    def _publish_payload(self, topic: str, payload_obj: Any, row_count: int) -> None:
+        payload = json.dumps(payload_obj)
+        info = self.client.publish(topic, payload, qos=0)
+        rc = getattr(info, "rc", 0)
+        if rc != 0:
+            logger.warning(
+                "MQTT publish failed topic=%s rc=%s rows=%d",
+                topic,
+                rc,
+                row_count,
+            )
+            return
+        self._published_messages += 1
+        self._published_rows += row_count
+        logger.debug("MQTT published topic=%s rows=%d", topic, row_count)
 
     def _maybe_log_publish_summary(self) -> None:
         now = time.monotonic()
