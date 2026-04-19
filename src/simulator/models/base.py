@@ -40,6 +40,11 @@ class SensorConfig:
         self.has_emitted_value = True
         self.last_emitted_at = current_time
 
+    def prime_schedule(self, start_time):
+        if self.update_interval_sec:
+            offset = random.uniform(0, self.update_interval_sec)
+            self.next_update = start_time + timedelta(seconds=offset)
+
     def set_next_update(self, current_time: datetime, emitted: bool = True) -> None:
         base_interval = self.update_interval_sec
         if self.emit_on_change:

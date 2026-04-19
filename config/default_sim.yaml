@@ -1,18 +1,18 @@
-.standard_charger_sensors: &standard_charger_sensors
+standard_Csensors: &standard_Csensors
   - name: "Grid_Voltage_AC"
-    interval: 0.1
+    interval: 1.0
   - name: "Grid_Current_AC"
-    interval: 0.5
+    interval: 1.0
   - name: "Input_Power_kW"
     interval: 0.5
   - name: "DC_Bus_Voltage"
-    interval: 0.2
+    interval: 0.5
   - name: "Output_Voltage_DC"
-    interval: 0.1
+    interval: 0.2
   - name: "Output_Current_DC"
-    interval: 0.1
+    interval: 0.2
   - name: "Requested_Current_DC"
-    interval: 0.1
+    interval: 0.2
   - name: "Cooling_Fan_RPM"
     interval: 1.0
   - name: "Pump_Speed_RPM"
@@ -26,27 +26,30 @@
   - name: "Coolant_Outlet_Temp"
     interval: 5.0
   - name: "Ambient_Temp"
-    interval: 10.0
+    interval: 30.0
   - name: "Cabinet_Temp"
     interval: 5.0
   - name: "Power_Module_Temp"
-    interval: 5.0
+    interval: 2.0
   - name: "Cable_Connector_Temp"
-    interval: 5.0
+    interval: 2.0
   - name: "Connector_Resistance_mOhm"
     interval: 5.0
   - name: "Derate_Level_Percent"
     interval: 1.0
   - name: "EV_State_of_Charge"
     interval: 5.0
-  - name: "Charger_State"
-    interval: 1.0
+  - name: "CState"
+    emit_on_change: true
+    heartbeat_interval_sec: 30.0
   - name: "Session_Duration"
     interval: 1.0
   - name: "Warning_Code"
-    interval: 1.0
+    emit_on_change: true
+    heartbeat_interval_sec: 30.0
   - name: "Error_Code"
-    interval: 1.0
+    emit_on_change: true
+    heartbeat_interval_sec: 30.0
 
 .standard_site_sensors: &standard_site_sensors
   - name: "site_total_power_kw"
@@ -66,7 +69,7 @@
 
 simulation:
   tick_rate_sec: 0.05
-  backfill_days: 0.01
+  backfill_days: 186
   backfill_log_interval_sec: 300
   realtime_log_interval_sec: 30
   write_buffer_max_rows: 15000
@@ -84,16 +87,16 @@ writers:
       max_size_mb: 25.0
       flush_every_batches: 8
       allow_backfill: true
-      allow_realtime: true
+      allow_realtime: false
 
-  - type: csv
-    config:
-      output_dir: "/data/unified"
-      filename: "ev_history.csv"
-      max_size_mb: 25.0
-      flush_every_batches: 8
-      allow_backfill: true
-      allow_realtime: true
+#  - type: csv
+#    config:
+#      output_dir: "/data/unified"
+#      filename: "ev_history.csv"
+#      max_size_mb: 25.0
+#      flush_every_batches: 8
+#      allow_backfill: true
+#      allow_realtime: false
 
   - type: mqtt
     config:
@@ -113,51 +116,51 @@ writers:
       fail_open: true
 
 assets:
-  - name: "Site_Melbourne_North"
+  - name: "AC.North"
     type: "ChargingSite"
     max_queue: 3
     sensors: *standard_site_sensors
     chargers:
-      - name: "Charger_01"
-        sensors: *standard_charger_sensors
+      - name: "C01"
+        sensors: *standard_Csensors
 
-      - name: "Charger_02"
+      - name: "C02"
         anomalies:
           - type: "FAN_FAILURE"
             start_sec: 600
             duration_sec: 7200
-        sensors: *standard_charger_sensors
+        sensors: *standard_Csensors
 
-      - name: "Charger_03"
+      - name: "C03"
         random_anomalies:
           enabled: true
           chance_per_hour: 0.02
           types: ["FAN_FAILURE", "CONNECTOR_ARCING", "BMS_CHATTER", "PUMP_DEGRADATION"]
           min_duration_sec: 1800
           max_duration_sec: 14400
-        sensors: *standard_charger_sensors
+        sensors: *standard_Csensors
 
-      - name: "Charger_04"
+      - name: "C04"
         random_anomalies:
           enabled: true
           chance_per_hour: 0.08
           types: ["FAN_FAILURE", "PUMP_DEGRADATION"]
           min_duration_sec: 3600
           max_duration_sec: 7200
-        sensors: *standard_charger_sensors
+        sensors: *standard_Csensors
 
-      - name: "Charger_05"
+      - name: "C05"
         anomalies:
           - type: "CONNECTOR_ARCING"
             start_sec: 3600
             duration_sec: 1800
-        sensors: *standard_charger_sensors
+        sensors: *standard_Csensors
 
-      - name: "Charger_06"
+      - name: "C06"
         random_anomalies:
           enabled: true
           chance_per_hour: 0.03
           types: ["BMS_CHATTER", "CONTACTOR_CHATTER", "SENSOR_DRIFT"]
           min_duration_sec: 900
           max_duration_sec: 3600
-        sensors: *standard_charger_sensors
+        sensors: *standard_Csensors
