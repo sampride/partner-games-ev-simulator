@@ -39,7 +39,7 @@ standard_Csensors: &standard_Csensors
     interval: 1.0
   - name: "EV_State_of_Charge"
     interval: 5.0
-  - name: "CState"
+  - name: "Charger_State"
     emit_on_change: true
     heartbeat_interval_sec: 30.0
   - name: "Session_Duration"
@@ -81,22 +81,27 @@ simulation:
   # history_duration_days: 7
 
 writers:
-  - type: csv_per_sensor
+#  - type: csv_per_sensor
+#    config:
+#      output_dir: "/data/split_sensors"
+#      max_size_mb: 25.0
+#      flush_every_batches: 8
+#      allow_backfill: false
+#      allow_realtime: false
+
+  - type: csv
     config:
-      output_dir: "/data/split_sensors"
+      output_dir: "/data/unified"
+      filename: "ev_history.csv"
       max_size_mb: 25.0
       flush_every_batches: 8
       allow_backfill: true
       allow_realtime: false
-
-#  - type: csv
-#    config:
-#      output_dir: "/data/unified"
-#      filename: "ev_history.csv"
-#      max_size_mb: 25.0
-#      flush_every_batches: 8
-#      allow_backfill: true
-#      allow_realtime: false
+      #include_header: true
+      include_asset_column: false
+      include_sensor_column: false
+      include_stream_id_column: true
+      stream_id_separator: "."
 
   - type: mqtt
     config:
