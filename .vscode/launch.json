@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Simulator",
+      "type": "python",
+      "request": "launch",
+      "module": "simulator.main",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "SIM_CONFIG_PATH": "${workspaceFolder}/config/default_sim.yaml",
+        "SIM_DATA_PATH": "${workspaceFolder}/data"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}
