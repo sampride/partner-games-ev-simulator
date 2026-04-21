@@ -42,6 +42,9 @@ class SimulationEngine:
         self._realtime_immediate_writer_indexes: set[int] = {
             idx for idx, writer in enumerate(self.writers) if getattr(writer, "prefer_realtime_immediate", False)
         }
+        self._tick_row_accumulator = 0
+        self._tick_count = 0
+        self._max_tick_rows = 0
 
         default_start = datetime.now() - timedelta(days=backfill_days)
         self.virtual_time = self.state_manager.load_runtime_state(self.assets, default_start)
@@ -178,16 +181,33 @@ class SimulationEngine:
                     last_save_time = real_now
 
                 if is_backfilling:
+                    self._tick_row_accumulator += tick_rows
+                    self._tick_count += 1
+                    self._max_tick_rows = max(self._max_tick_rows, tick_rows)
+
                     if (self.virtual_time - last_backfill_log_virtual).total_seconds() >= self.backfill_log_interval_sec:
                         lag = (self.history_end_time - self.virtual_time) if self.history_mode and self.history_end_time else (now - self.virtual_time)
+                        # logger.info(
+                        #     "Backfill progress virtual=%s lag=%s tick_rows=%d buffered_rows=%d active_writers=%d",
+                        #     self.virtual_time.isoformat(),
+                        #     str(lag).split(".")[0],
+                        #     tick_rows,
+                        #     len(self._write_buffer),
+                        #     len(self.writers) - len(self._disabled_writers),
+                        # )
+
+                        avg_tick_rows = self._tick_row_accumulator / max(self._tick_count, 1)
+
                         logger.info(
-                            "Backfill progress virtual=%s lag=%s tick_rows=%d buffered_rows=%d active_writers=%d",
-                            self.virtual_time.isoformat(),
-                            str(lag).split(".")[0],
-                            tick_rows,
-                            len(self._write_buffer),
-                            len(self.writers) - len(self._disabled_writers),
+                            f"Backfill progress virtual={self.virtual_time.isoformat()} "
+                            f"lag={str(lag).split('.')[0]} "
+                            f"tick_rows={tick_rows} "
+                            f"avg_tick_rows={avg_tick_rows:.2f} "
+                            f"max_tick_rows={self._max_tick_rows} "
+                            f"buffered_rows={len(self._write_buffer)} "
+                            f"active_writers={len(self.writers) - len(self._disabled_writers)}"
                         )
+
                         last_backfill_log_virtual = self.virtual_time
                     self.virtual_time += timedelta(seconds=self.tick_rate_sec)
                 else:
