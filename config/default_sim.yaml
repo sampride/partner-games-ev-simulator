@@ -69,7 +69,7 @@ standard_Csensors: &standard_Csensors
 
 simulation:
   tick_rate_sec: 0.05
-  backfill_days: 186
+  backfill_days: 1
   backfill_log_interval_sec: 300
   realtime_log_interval_sec: 30
   write_buffer_max_rows: 15000
@@ -81,13 +81,13 @@ simulation:
   # history_duration_days: 7
 
 writers:
-#  - type: csv_per_sensor
-#    config:
-#      output_dir: "/data/split_sensors"
-#      max_size_mb: 25.0
-#      flush_every_batches: 8
-#      allow_backfill: false
-#      allow_realtime: false
+  - type: csv_per_sensor
+    config:
+      output_dir: "/data/split_sensors"
+      max_size_mb: 25.0
+      flush_every_batches: 8
+      allow_backfill: true
+      allow_realtime: false
 
   - type: csv
     config:
@@ -119,7 +119,6 @@ writers:
       reconnect_max_delay: 60
       boot_backoff_max: 30.0
       fail_open: true
-
 assets:
   - name: "AC.North"
     type: "ChargingSite"
