@@ -1,6 +1,8 @@
 import asyncio
 import gzip
 import json
+import threading
+import time
 from datetime import datetime
 
 from simulator.utils.config_parser import build_simulation_components, validate_config
@@ -34,6 +36,25 @@ class CaptureOmfWriter(OmfWriter):
     def _post(self, url, headers, body):
         self.posts.append((url, headers, body))
         return 202, ""
+
+
+class SlowCaptureOmfWriter(CaptureOmfWriter):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.active_posts = 0
+        self.max_active_posts = 0
+        self._lock = threading.Lock()
+
+    def _post(self, url, headers, body):
+        with self._lock:
+            self.active_posts += 1
+            self.max_active_posts = max(self.max_active_posts, self.active_posts)
+        try:
+            time.sleep(0.03)
+            return super()._post(url, headers, body)
+        finally:
+            with self._lock:
+                self.active_posts -= 1
 
 
 def _json_body(body):
@@ -167,6 +188,32 @@ def test_omf_writer_splits_data_batches_by_body_size() -> None:
     data_posts = [post for post in writer.posts if post[1]["messagetype"] == "data"]
     assert len(data_posts) > 1
     assert all(_body_size(post[2]) <= writer.max_body_bytes for post in data_posts)
+
+
+def test_omf_writer_can_post_data_batches_concurrently() -> None:
+    writer = SlowCaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        batch_size=1000,
+        max_body_bytes=1200,
+        max_concurrent_requests=3,
+        use_compression=False,
+    )
+
+    rows = [
+        {
+            "timestamp": "2026-04-14T01:00:00Z",
+            "asset": "AC.North.C01",
+            "sensor": f"Status_{index}",
+            "data_type": "string",
+            "value": "x" * 250,
+        }
+        for index in range(12)
+    ]
+
+    asyncio.run(writer.write_batch(rows))
+
+    assert writer.max_active_posts > 1
 
 
 def test_omf_writer_splits_container_batches_by_body_size() -> None:

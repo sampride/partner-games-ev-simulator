@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import logging
@@ -39,6 +40,7 @@ class OmfWriter:
         batch_size: int = 5000,
         container_batch_size: int = 1000,
         max_body_bytes: int = DEFAULT_MAX_OMF_BODY_BYTES,
+        max_concurrent_requests: int = 1,
         use_compression: bool = True,
         verify_ssl: bool = True,
         timeout_seconds: float = 30.0,
@@ -64,6 +66,7 @@ class OmfWriter:
         self.batch_size = max(1, int(batch_size))
         self.container_batch_size = max(1, int(container_batch_size))
         self.max_body_bytes = min(MAX_OMF_BODY_BYTES, max(1024, int(max_body_bytes)))
+        self.max_concurrent_requests = max(1, int(max_concurrent_requests))
         self.use_compression = use_compression
         self.verify_ssl = verify_ssl
         self.timeout_seconds = timeout_seconds
@@ -175,7 +178,7 @@ class OmfWriter:
             rows_by_container.setdefault(container_id, []).append(row)
 
         await self._ensure_containers(rows_by_container)
-        self._send_data_rows(rows_by_container)
+        await self._send_data_rows(rows_by_container)
 
     async def _ensure_containers(
         self, rows_by_container: dict[str, list[dict[str, Any]]]
@@ -189,13 +192,14 @@ class OmfWriter:
             self._known_containers.add(container_id)
             containers.append(self._build_container(container_id, omf_type))
 
-        self._send_sized_omf_batches(
+        await self._send_sized_omf_batches(
             "container",
             containers,
             max_items_per_batch=self.container_batch_size,
         )
 
-    def _send_data_rows(self, rows_by_container: dict[str, list[dict[str, Any]]]) -> None:
+    async def _send_data_rows(self, rows_by_container: dict[str, list[dict[str, Any]]]) -> None:
+        batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_rows = 0
         batch_size_bytes = self._list_payload_size([])
@@ -226,7 +230,7 @@ class OmfWriter:
                         or self._append_size(batch_size_bytes, True, message_size)
                         > self.max_body_bytes
                     ):
-                        self._send_omf_message("data", batch)
+                        batches.append(batch)
                         batch = []
                         batch_rows = 0
                         batch_size_bytes = self._list_payload_size([])
@@ -253,7 +257,7 @@ class OmfWriter:
                 or self._append_size(batch_size_bytes, True, message_size)
                 > self.max_body_bytes
             ):
-                self._send_omf_message("data", batch)
+                batches.append(batch)
                 batch = []
                 batch_rows = 0
                 batch_size_bytes = self._list_payload_size([])
@@ -265,7 +269,9 @@ class OmfWriter:
             )
 
         if batch:
-            self._send_omf_message("data", batch)
+            batches.append(batch)
+
+        await self._send_omf_batches("data", batches)
 
     def _build_value(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -298,13 +304,14 @@ class OmfWriter:
         empty_message = self._build_data_message_from_values(container_id, [])
         return self._dict_payload_size(empty_message) - self._list_payload_size([])
 
-    def _send_sized_omf_batches(
+    async def _send_sized_omf_batches(
         self,
         message_type: str,
         payloads: list[dict[str, Any]],
         *,
         max_items_per_batch: int,
     ) -> None:
+        batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_size_bytes = self._list_payload_size([])
         for payload in payloads:
@@ -316,7 +323,7 @@ class OmfWriter:
                 len(batch) + 1 > max_items_per_batch
                 or candidate_size > self.max_body_bytes
             ):
-                self._send_omf_message(message_type, batch)
+                batches.append(batch)
                 batch = []
                 batch_size_bytes = self._list_payload_size([])
             batch.append(payload)
@@ -324,7 +331,31 @@ class OmfWriter:
                 batch_size_bytes, bool(batch) and len(batch) > 1, payload_size
             )
         if batch:
-            self._send_omf_message(message_type, batch)
+            batches.append(batch)
+
+        await self._send_omf_batches(message_type, batches)
+
+    async def _send_omf_batches(
+        self, message_type: str, batches: list[list[dict[str, Any]]]
+    ) -> None:
+        if not batches:
+            return
+
+        if self.max_concurrent_requests == 1 or len(batches) == 1:
+            for batch in batches:
+                self._send_omf_message(message_type, batch)
+            return
+
+        if self.endpoint_type == "cds":
+            self._get_token()
+
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+        async def send_batch(batch: list[dict[str, Any]]) -> None:
+            async with semaphore:
+                await asyncio.to_thread(self._send_omf_message, message_type, batch)
+
+        await asyncio.gather(*(send_batch(batch) for batch in batches))
 
     def _send_omf_message(
         self, message_type: str, payload: list[dict[str, Any]], action: str = "create"

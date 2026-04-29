@@ -168,7 +168,7 @@ class EVCharger(Asset):
             }
         )
 
-    def _determine_active_anomaly(self, delta_sec: float) -> None:
+    def _determine_active_anomaly(self, delta_sec: float, suppress_logs: bool = False) -> None:
         uptime = self.state["simulation_uptime_sec"]
         active = "NONE"
         end_time = 0.0
@@ -208,7 +208,7 @@ class EVCharger(Asset):
             ramp_window = min(2400.0, max(240.0, time_left * 0.55))
             self.state["anomaly_severity"] = min(1.0, self.state["anomaly_severity"] + (delta_sec / ramp_window))
 
-        if previous != active:
+        if previous != active and not suppress_logs:
             logger.info("%s anomaly %s -> %s", self.name, previous, active)
 
     def _recover_latent_state(self, delta_sec: float) -> None:
@@ -331,9 +331,10 @@ class EVCharger(Asset):
     ) -> None:
         ambient_temp = float(global_state.get("ambient_temp_c", 25.0))
         grid_voltage = float(global_state.get("current_grid_voltage", 480.0))
+        is_backfilling = bool(global_state.get("is_backfilling", False))
         self.state["simulation_uptime_sec"] += delta_sec
 
-        self._determine_active_anomaly(delta_sec)
+        self._determine_active_anomaly(delta_sec, suppress_logs=is_backfilling)
         self._apply_health_drift(delta_sec, current_time)
 
         previous_state = self.state["charger_state"]
@@ -510,15 +511,7 @@ class EVCharger(Asset):
             self.state[temp_key] = max(ambient_temp - 3.0, self.state[temp_key])
 
         if previous_state != self.state["charger_state"]:
-            is_backfilling = bool(global_state.get("is_backfilling", False))
-            important_transition = (
-                self.state["charger_state"] == self.STATE_FAULT
-                or previous_state == self.STATE_FAULT
-                or self.state["error_code"] != self.ERROR_NONE
-                or self.state["warning_code"] != 0
-                or self.state["derate_level_pct"] >= 5.0
-            )
-            if not is_backfilling or important_transition:
+            if not is_backfilling:
                 logger.info(
                     "%s state %s -> %s (warning=%s error=%s derate=%.1f%%)",
                     self.name,

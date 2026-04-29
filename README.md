@@ -461,6 +461,13 @@ headroom below the 192 KiB OMF limit. `batch_size` and `container_batch_size`
 remain as high row-count safety ceilings; for backfill throughput they should
 normally be high enough that `max_body_bytes` is the limiting factor.
 
+For backfill throughput, `max_concurrent_requests` can post multiple prepared
+OMF requests at the same time. The default is `1` to keep realtime OMF behavior
+conservative. A value of `2` is a practical first test for backfill; only raise
+it further if the target endpoint does not rate-limit or slow down under
+parallel load. This is OMF-specific and does not change MQTT realtime publishing,
+which still uses its immediate writer path.
+
 Stream IDs follow the existing convention:
 
 ```text
@@ -499,6 +506,7 @@ EDS example:
     max_body_bytes: 184320
     batch_size: 5000
     container_batch_size: 1000
+    max_concurrent_requests: 2
     use_compression: true
     allow_backfill: true
     allow_realtime: false
@@ -525,6 +533,7 @@ CDS example:
       string: "Timeindexed.String"
     max_body_bytes: 184320
     batch_size: 5000
+    max_concurrent_requests: 2
     use_compression: true
     allow_backfill: true
     allow_realtime: false

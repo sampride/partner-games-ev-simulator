@@ -124,6 +124,32 @@ def test_backfill_suppresses_unimportant_state_transition_logs(caplog) -> None:
     assert not any("state 1 -> 2" in message for message in caplog.messages)
 
 
+def test_backfill_suppresses_important_state_and_anomaly_logs(caplog) -> None:
+    from datetime import datetime
+    from simulator.models.ev_charger import EVCharger
+
+    charger = EVCharger("Test")
+    charger.start_session(1800)
+    charger.state["charger_state"] = EVCharger.STATE_CHARGING
+    charger.scheduled_anomalies = [
+        {"type": "PUMP_DEGRADATION", "start_sec": 0, "duration_sec": 1200}
+    ]
+    charger.state["power_module_temp_c"] = 73.0
+
+    with caplog.at_level("INFO"):
+        charger.update_internal_state(
+            0.2,
+            datetime(2026, 1, 1, 12, 0, 0),
+            {
+                "ambient_temp_c": 22.0,
+                "current_grid_voltage": 480.0,
+                "is_backfilling": True,
+            },
+        )
+
+    assert not any("state" in message or "anomaly" in message for message in caplog.messages)
+
+
 def test_writer_failure_isolated(tmp_path: Path) -> None:
     class FailingWriter(CaptureWriter):
         async def write_batch(self, data):

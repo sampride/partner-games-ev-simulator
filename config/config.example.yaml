@@ -143,6 +143,7 @@ writers:
   #     max_body_bytes: 184320  # 180 KiB; OMF message body max is 192 KiB
   #     batch_size: 5000        # row-count safety ceiling; size limit usually wins
   #     container_batch_size: 1000
+  #     max_concurrent_requests: 2  # useful for backfill if the endpoint tolerates it
   #     use_compression: true
   #     allow_backfill: true
   #     allow_realtime: false
