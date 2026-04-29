@@ -126,6 +126,17 @@ writers:
   #     # namespace_id: "<namespace-id>"
   #     # client_id_env: "OMF_CLIENT_ID"
   #     # client_secret_env: "OMF_CLIENT_SECRET"
+  #     # The OMF types must already exist in the target platform. Each type is
+  #     # expected to include Timestamp and Value properties.
+  #     type_id: "Timeindexed.Double"
+  #     type_ids:
+  #       double: "Timeindexed.Double"
+  #       integer: "Timeindexed.Integer"
+  #       string: "Timeindexed.String"
+  #     sensor_type_ids:
+  #       Charger_State: "Timeindexed.String"
+  #       Warning_Code: "Timeindexed.Integer"
+  #       Error_Code: "Timeindexed.Integer"
   #     batch_size: 500
   #     container_batch_size: 100
   #     use_compression: true

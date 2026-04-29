@@ -16,9 +16,6 @@ logger = logging.getLogger("simulator.writers.omf")
 
 
 class OmfWriter:
-    NUMBER_TYPE_ID = "SimulatorNumberValue"
-    STRING_TYPE_ID = "SimulatorStringValue"
-
     def __init__(
         self,
         endpoint_type: str,
@@ -40,7 +37,10 @@ class OmfWriter:
         verify_ssl: bool = True,
         timeout_seconds: float = 30.0,
         stream_id_separator: str = ".",
-        send_types_on_start: bool = True,
+        type_id: str = "Timeindexed.Double",
+        type_ids: dict[str, str] | None = None,
+        stream_type_ids: dict[str, str] | None = None,
+        sensor_type_ids: dict[str, str] | None = None,
     ) -> None:
         self.endpoint_type = endpoint_type.strip().lower()
         if self.endpoint_type not in {"cds", "eds"}:
@@ -61,14 +61,25 @@ class OmfWriter:
         self.verify_ssl = verify_ssl
         self.timeout_seconds = timeout_seconds
         self.stream_id_separator = stream_id_separator
-        self.send_types_on_start = send_types_on_start
+        self.default_type_id = type_id
+        self.type_ids = {
+            "default": type_id,
+            "number": type_id,
+            "double": type_id,
+            "integer": "Timeindexed.Integer",
+            "string": "Timeindexed.String",
+            "boolean": "Timeindexed.Boolean",
+        }
+        if type_ids:
+            self.type_ids.update({str(key).lower(): value for key, value in type_ids.items()})
+        self.stream_type_ids = stream_type_ids or {}
+        self.sensor_type_ids = sensor_type_ids or {}
 
         self.omf_endpoint = omf_endpoint or self._build_omf_endpoint()
         self._access_token: str | None = None
         self._token_expiration = 0.0
         self._known_containers: set[str] = set()
         self._container_types: dict[str, str] = {}
-        self._types_sent = False
 
         if self.endpoint_type == "cds" and (not self.client_id or not self.client_secret):
             raise ValueError(
@@ -92,42 +103,21 @@ class OmfWriter:
             )
         return f"{base_endpoint}/omf"
 
-    def _omf_types(self) -> list[dict[str, Any]]:
-        timestamp = {
-            "format": "date-time",
-            "type": "string",
-            "isindex": True,
-            "description": "Timestamp property as index",
-        }
-        return [
-            {
-                "id": self.NUMBER_TYPE_ID,
-                "name": "Simulator numeric telemetry value",
-                "classification": "dynamic",
-                "type": "object",
-                "properties": {
-                    "Timestamp": timestamp,
-                    "Value": {"type": "number", "format": "float64"},
-                },
-            },
-            {
-                "id": self.STRING_TYPE_ID,
-                "name": "Simulator string telemetry value",
-                "classification": "dynamic",
-                "type": "object",
-                "properties": {
-                    "Timestamp": timestamp,
-                    "Value": {"type": "string"},
-                },
-            },
-        ]
+    def _container_type_for_row(self, row: dict[str, Any], container_id: str) -> str:
+        sensor = str(row.get("sensor", "unknown_sensor"))
+        if container_id in self.stream_type_ids:
+            return self.stream_type_ids[container_id]
+        if sensor in self.sensor_type_ids:
+            return self.sensor_type_ids[sensor]
 
-    def _container_type_for_value(self, value: Any) -> str:
+        value = row.get("value")
         if isinstance(value, bool):
-            return self.STRING_TYPE_ID
-        if isinstance(value, int | float):
-            return self.NUMBER_TYPE_ID
-        return self.STRING_TYPE_ID
+            return self.type_ids.get("boolean", self.default_type_id)
+        if isinstance(value, int):
+            return self.type_ids.get("integer", self.default_type_id)
+        if isinstance(value, float):
+            return self.type_ids.get("double", self.type_ids.get("number", self.default_type_id))
+        return self.type_ids.get("string", self.default_type_id)
 
     def _build_stream_id(self, row: dict[str, Any]) -> str:
         asset = str(row.get("asset", "unknown_asset"))
@@ -145,25 +135,23 @@ class OmfWriter:
             return value.isoformat()
         return str(value)
 
-    def _serialize_value(self, value: Any, type_id: str) -> Any:
-        if type_id == self.NUMBER_TYPE_ID:
-            return float(value)
+    def _serialize_value(self, value: Any) -> Any:
         if isinstance(value, datetime | date):
             return value.isoformat()
-        return str(value)
+        return value
 
     def _build_container(self, container_id: str, type_id: str) -> dict[str, str]:
         return {"id": container_id, "typeid": type_id}
 
     def _build_data_message(
-        self, container_id: str, type_id: str, rows: list[dict[str, Any]]
+        self, container_id: str, rows: list[dict[str, Any]]
     ) -> dict[str, Any]:
         return {
             "containerid": container_id,
             "values": [
                 {
                     "Timestamp": self._serialize_timestamp(row.get("timestamp")),
-                    "Value": self._serialize_value(row.get("value"), type_id),
+                    "Value": self._serialize_value(row.get("value")),
                 }
                 for row in rows
             ],
@@ -173,10 +161,6 @@ class OmfWriter:
         if not data:
             return
 
-        if self.send_types_on_start and not self._types_sent:
-            self._send_omf_message("type", self._omf_types())
-            self._types_sent = True
-
         rows_by_container: dict[str, list[dict[str, Any]]] = {}
         for row in data:
             container_id = self._build_stream_id(row)
@@ -185,8 +169,7 @@ class OmfWriter:
         await self._ensure_containers(rows_by_container)
         data_messages: list[dict[str, Any]] = []
         for container_id, rows in rows_by_container.items():
-            type_id = self._container_types[container_id]
-            data_messages.extend(self._chunk_data_messages(container_id, type_id, rows))
+            data_messages.extend(self._chunk_data_messages(container_id, rows))
 
         self._send_data_messages(data_messages)
 
@@ -197,7 +180,7 @@ class OmfWriter:
         for container_id, rows in rows_by_container.items():
             if container_id in self._known_containers:
                 continue
-            type_id = self._container_type_for_value(rows[0].get("value"))
+            type_id = self._container_type_for_row(rows[0], container_id)
             self._container_types[container_id] = type_id
             self._known_containers.add(container_id)
             containers.append(self._build_container(container_id, type_id))
@@ -208,13 +191,13 @@ class OmfWriter:
             )
 
     def _chunk_data_messages(
-        self, container_id: str, type_id: str, rows: list[dict[str, Any]]
+        self, container_id: str, rows: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         messages = []
         for start in range(0, len(rows), self.batch_size):
             chunk = rows[start : start + self.batch_size]
             messages.append(
-                self._build_data_message(container_id, type_id, chunk)
+                self._build_data_message(container_id, chunk)
             )
         return messages
 

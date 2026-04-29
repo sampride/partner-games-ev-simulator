@@ -66,7 +66,8 @@ The simulator currently supports:
 
 - **`omf`**
   - sends OMF 1.2 JSON messages to a CDS or EDS OMF REST endpoint
-  - creates streams with container messages and sends telemetry with batched data messages
+  - creates streams with container messages that reference existing OMF types
+  - sends telemetry with batched data messages
 
 - **`mqtt`**
   - publishes live telemetry in realtime mode
@@ -390,7 +391,9 @@ This writer sends OMF 1.2 messages to an OMF REST endpoint. It currently support
 - `endpoint_type: "eds"` with no authentication
 - `endpoint_type: "cds"` with client-credentials bearer-token authentication
 
-The writer sends shared OMF dynamic types, lazily creates one container per simulator stream, then sends data messages in configurable batches. Stream IDs follow the existing convention:
+The writer does **not** create OMF types. It expects the target platform to already contain one or more compatible time-indexed types with at least `Timestamp` and `Value` properties. It lazily creates one container per simulator stream using the configured type ID, then sends data messages in configurable batches.
+
+Stream IDs follow the existing convention:
 
 ```text
 AC.North.C01.Output_Current_DC
@@ -399,7 +402,7 @@ AC.North.C01.Output_Current_DC
 The generated container shape is:
 
 ```json
-{"id":"AC.North.C01.Output_Current_DC","typeid":"SimulatorNumberValue"}
+{"id":"AC.North.C01.Output_Current_DC","typeid":"Timeindexed.Double"}
 ```
 
 The generated data shape is:
@@ -420,6 +423,15 @@ EDS example:
   config:
     endpoint_type: "eds"
     resource: "http://localhost:5590"
+    type_id: "Timeindexed.Double"
+    type_ids:
+      double: "Timeindexed.Double"
+      integer: "Timeindexed.Integer"
+      string: "Timeindexed.String"
+    sensor_type_ids:
+      Charger_State: "Timeindexed.String"
+      Warning_Code: "Timeindexed.Integer"
+      Error_Code: "Timeindexed.Integer"
     batch_size: 500
     container_batch_size: 100
     use_compression: true
@@ -438,12 +450,23 @@ CDS example:
     namespace_id: "<namespace-id>"
     client_id_env: "OMF_CLIENT_ID"
     client_secret_env: "OMF_CLIENT_SECRET"
+    type_id: "Timeindexed.Double"
+    type_ids:
+      double: "Timeindexed.Double"
+      integer: "Timeindexed.Integer"
+      string: "Timeindexed.String"
     batch_size: 500
     use_compression: true
     allow_backfill: true
     allow_realtime: false
     fail_open: true
 ```
+
+Type selection order:
+- `stream_type_ids` can override a full stream ID such as `AC.North.C01.Warning_Code`
+- `sensor_type_ids` can override a sensor name such as `Charger_State`
+- `type_ids` maps value categories such as `double`, `integer`, `string`, and `boolean`
+- `type_id` is the fallback/default type ID
 
 ### Which CSV writer should be used for the AVEVA file adapter?
 

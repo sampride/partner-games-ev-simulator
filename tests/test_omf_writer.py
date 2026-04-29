@@ -59,6 +59,7 @@ def test_eds_writer_creates_containers_and_batches_data() -> None:
         resource="http://localhost:5590",
         batch_size=2,
         use_compression=False,
+        type_id="Timeindexed.Double",
     )
 
     asyncio.run(
@@ -87,7 +88,6 @@ def test_eds_writer_creates_containers_and_batches_data() -> None:
     )
 
     assert [post[1]["messagetype"] for post in writer.posts] == [
-        "type",
         "container",
         "data",
         "data",
@@ -97,12 +97,12 @@ def test_eds_writer_creates_containers_and_batches_data() -> None:
         "http://localhost:5590/api/v1/tenants/default/namespaces/default/omf"
     )
 
-    container_payload = _json_body(writer.posts[1][2])
+    container_payload = _json_body(writer.posts[0][2])
     assert container_payload == [
-        {"id": "AC.North.C01.Output_Current_DC", "typeid": "SimulatorNumberValue"}
+        {"id": "AC.North.C01.Output_Current_DC", "typeid": "Timeindexed.Double"}
     ]
 
-    first_data_payload = _json_body(writer.posts[2][2])
+    first_data_payload = _json_body(writer.posts[1][2])
     assert first_data_payload == [
         {
             "containerid": "AC.North.C01.Output_Current_DC",
@@ -131,9 +131,62 @@ def test_existing_omf_container_is_not_recreated() -> None:
     asyncio.run(writer.write_batch([{**row, "value": 2.0}]))
 
     message_types = [post[1]["messagetype"] for post in writer.posts]
-    assert message_types.count("type") == 1
     assert message_types.count("container") == 1
     assert message_types.count("data") == 2
+
+
+def test_omf_writer_uses_configured_type_mappings() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        use_compression=False,
+        type_ids={
+            "double": "Timeindexed.Double",
+            "integer": "Timeindexed.Integer",
+            "string": "Timeindexed.String",
+        },
+        sensor_type_ids={"Charger_State": "Timeindexed.String"},
+        stream_type_ids={"AC.North.C01.Warning_Code": "Timeindexed.Integer"},
+    )
+
+    asyncio.run(
+        writer.write_batch(
+            [
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Output_Current_DC",
+                    "value": 42.7,
+                },
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Session_Duration",
+                    "value": 12,
+                },
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Charger_State",
+                    "value": "Charging",
+                },
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Warning_Code",
+                    "value": "2",
+                },
+            ]
+        )
+    )
+
+    container_payload = _json_body(writer.posts[0][2])
+    assert container_payload == [
+        {"id": "AC.North.C01.Output_Current_DC", "typeid": "Timeindexed.Double"},
+        {"id": "AC.North.C01.Session_Duration", "typeid": "Timeindexed.Integer"},
+        {"id": "AC.North.C01.Charger_State", "typeid": "Timeindexed.String"},
+        {"id": "AC.North.C01.Warning_Code", "typeid": "Timeindexed.Integer"},
+    ]
 
 
 def test_cds_writer_authenticates_with_bearer_token() -> None:
@@ -177,9 +230,9 @@ def test_cds_writer_authenticates_with_bearer_token() -> None:
         )
     ]
     assert all(post[1]["Authorization"] == "Bearer token-1" for post in writer.posts)
-    container_payload = _json_body(writer.posts[1][2])
+    container_payload = _json_body(writer.posts[0][2])
     assert container_payload == [
-        {"id": "AC.North.C01.Charger_State", "typeid": "SimulatorStringValue"}
+        {"id": "AC.North.C01.Charger_State", "typeid": "Timeindexed.String"}
     ]
 
 
