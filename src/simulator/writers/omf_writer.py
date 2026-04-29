@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import ssl
+import threading
 import time
 from datetime import date, datetime, timezone
 from typing import Any
@@ -17,6 +18,47 @@ logger = logging.getLogger("simulator.writers.omf")
 
 DEFAULT_MAX_OMF_BODY_BYTES = 180 * 1024
 MAX_OMF_BODY_BYTES = 192 * 1024
+
+
+class _OmfBatchStats:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.rows = 0
+        self.streams = 0
+        self.container_batches = 0
+        self.data_batches = 0
+        self.container_messages = 0
+        self.data_messages = 0
+        self.data_values = 0
+        self.uncompressed_bytes = 0
+        self.compressed_bytes = 0
+        self.build_seconds = 0.0
+        self.serialization_seconds = 0.0
+        self.post_seconds = 0.0
+
+    def record_send(
+        self,
+        message_type: str,
+        payload: list[dict[str, Any]],
+        uncompressed_bytes: int,
+        compressed_bytes: int,
+        serialization_seconds: float,
+        post_seconds: float,
+    ) -> None:
+        with self._lock:
+            self.uncompressed_bytes += uncompressed_bytes
+            self.compressed_bytes += compressed_bytes
+            self.serialization_seconds += serialization_seconds
+            self.post_seconds += post_seconds
+            if message_type == "container":
+                self.container_batches += 1
+                self.container_messages += len(payload)
+            elif message_type == "data":
+                self.data_batches += 1
+                self.data_messages += len(payload)
+                self.data_values += sum(
+                    len(message.get("values", [])) for message in payload
+                )
 
 
 class OmfWriter:
@@ -172,17 +214,49 @@ class OmfWriter:
         if not data:
             return
 
+        started = time.perf_counter()
+        stats = _OmfBatchStats()
+        stats.rows = len(data)
         rows_by_container: dict[str, list[dict[str, Any]]] = {}
         for row in data:
             container_id = self._build_stream_id(row)
             rows_by_container.setdefault(container_id, []).append(row)
+        stats.streams = len(rows_by_container)
 
-        await self._ensure_containers(rows_by_container)
-        await self._send_data_rows(rows_by_container)
+        await self._ensure_containers(rows_by_container, stats)
+        await self._send_data_rows(rows_by_container, stats)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            total_seconds = time.perf_counter() - started
+            logger.debug(
+                "OMF write_batch rows=%d streams=%d container_batches=%d "
+                "data_batches=%d container_messages=%d data_messages=%d data_values=%d "
+                "uncompressed_bytes=%d compressed_bytes=%d "
+                "build_seconds=%.3f serialization_seconds=%.3f post_seconds=%.3f "
+                "total_seconds=%.3f concurrency=%d max_body_bytes=%d",
+                stats.rows,
+                stats.streams,
+                stats.container_batches,
+                stats.data_batches,
+                stats.container_messages,
+                stats.data_messages,
+                stats.data_values,
+                stats.uncompressed_bytes,
+                stats.compressed_bytes,
+                stats.build_seconds,
+                stats.serialization_seconds,
+                stats.post_seconds,
+                total_seconds,
+                self.max_concurrent_requests,
+                self.max_body_bytes,
+            )
 
     async def _ensure_containers(
-        self, rows_by_container: dict[str, list[dict[str, Any]]]
+        self,
+        rows_by_container: dict[str, list[dict[str, Any]]],
+        stats: _OmfBatchStats | None = None,
     ) -> None:
+        started = time.perf_counter()
         containers: list[dict[str, str]] = []
         for container_id, rows in rows_by_container.items():
             if container_id in self._known_containers:
@@ -192,13 +266,21 @@ class OmfWriter:
             self._known_containers.add(container_id)
             containers.append(self._build_container(container_id, omf_type))
 
+        if stats is not None:
+            stats.build_seconds += time.perf_counter() - started
         await self._send_sized_omf_batches(
             "container",
             containers,
             max_items_per_batch=self.container_batch_size,
+            stats=stats,
         )
 
-    async def _send_data_rows(self, rows_by_container: dict[str, list[dict[str, Any]]]) -> None:
+    async def _send_data_rows(
+        self,
+        rows_by_container: dict[str, list[dict[str, Any]]],
+        stats: _OmfBatchStats | None = None,
+    ) -> None:
+        started = time.perf_counter()
         batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_rows = 0
@@ -271,7 +353,9 @@ class OmfWriter:
         if batch:
             batches.append(batch)
 
-        await self._send_omf_batches("data", batches)
+        if stats is not None:
+            stats.build_seconds += time.perf_counter() - started
+        await self._send_omf_batches("data", batches, stats)
 
     def _build_value(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -310,7 +394,9 @@ class OmfWriter:
         payloads: list[dict[str, Any]],
         *,
         max_items_per_batch: int,
+        stats: _OmfBatchStats | None = None,
     ) -> None:
+        started = time.perf_counter()
         batches: list[list[dict[str, Any]]] = []
         batch: list[dict[str, Any]] = []
         batch_size_bytes = self._list_payload_size([])
@@ -333,17 +419,22 @@ class OmfWriter:
         if batch:
             batches.append(batch)
 
-        await self._send_omf_batches(message_type, batches)
+        if stats is not None:
+            stats.build_seconds += time.perf_counter() - started
+        await self._send_omf_batches(message_type, batches, stats)
 
     async def _send_omf_batches(
-        self, message_type: str, batches: list[list[dict[str, Any]]]
+        self,
+        message_type: str,
+        batches: list[list[dict[str, Any]]],
+        stats: _OmfBatchStats | None = None,
     ) -> None:
         if not batches:
             return
 
         if self.max_concurrent_requests == 1 or len(batches) == 1:
             for batch in batches:
-                self._send_omf_message(message_type, batch)
+                self._send_omf_message(message_type, batch, stats=stats)
             return
 
         if self.endpoint_type == "cds":
@@ -353,27 +444,67 @@ class OmfWriter:
 
         async def send_batch(batch: list[dict[str, Any]]) -> None:
             async with semaphore:
-                await asyncio.to_thread(self._send_omf_message, message_type, batch)
+                await asyncio.to_thread(
+                    self._send_omf_message, message_type, batch, stats=stats
+                )
 
         await asyncio.gather(*(send_batch(batch) for batch in batches))
 
     def _send_omf_message(
-        self, message_type: str, payload: list[dict[str, Any]], action: str = "create"
+        self,
+        message_type: str,
+        payload: list[dict[str, Any]],
+        action: str = "create",
+        stats: _OmfBatchStats | None = None,
     ) -> None:
         body: str | bytes
         headers = self._headers(message_type=message_type, action=action)
+        serialize_started = time.perf_counter()
         payload_json = self._payload_json(payload)
+        uncompressed_bytes = len(payload_json.encode("utf-8"))
         if self.use_compression:
             body = gzip.compress(payload_json.encode("utf-8"))
             headers["compression"] = "gzip"
         else:
             body = payload_json
+        serialization_seconds = time.perf_counter() - serialize_started
 
+        post_started = time.perf_counter()
         status, text = self._post(self.omf_endpoint, headers, body)
+        post_seconds = time.perf_counter() - post_started
+        if stats is not None:
+            self._record_send_stats(
+                stats,
+                message_type,
+                payload,
+                uncompressed_bytes,
+                len(body) if isinstance(body, bytes) else len(body.encode("utf-8")),
+                serialization_seconds,
+                post_seconds,
+            )
         if status == 409:
             return
         if status < 200 or status >= 300:
             raise RuntimeError(f"OMF {message_type} message failed: {status}:{text}")
+
+    def _record_send_stats(
+        self,
+        stats: _OmfBatchStats,
+        message_type: str,
+        payload: list[dict[str, Any]],
+        uncompressed_bytes: int,
+        compressed_bytes: int,
+        serialization_seconds: float,
+        post_seconds: float,
+    ) -> None:
+        stats.record_send(
+            message_type,
+            payload,
+            uncompressed_bytes,
+            compressed_bytes,
+            serialization_seconds,
+            post_seconds,
+        )
 
     def _headers(self, message_type: str, action: str) -> dict[str, str]:
         headers = {

@@ -468,6 +468,12 @@ it further if the target endpoint does not rate-limit or slow down under
 parallel load. This is OMF-specific and does not change MQTT realtime publishing,
 which still uses its immediate writer path.
 
+Set `LOG_LEVEL=DEBUG` to show one OMF timing line per writer batch. The timing
+line splits OMF work into `build_seconds`, `serialization_seconds`, and
+`post_seconds`, plus payload counts and compressed/uncompressed byte totals.
+Use this when deciding whether further optimization should target Python
+payload construction or endpoint/network POST time.
+
 Stream IDs follow the existing convention:
 
 ```text

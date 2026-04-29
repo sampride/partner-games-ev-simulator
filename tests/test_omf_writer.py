@@ -216,6 +216,41 @@ def test_omf_writer_can_post_data_batches_concurrently() -> None:
     assert writer.max_active_posts > 1
 
 
+def test_omf_writer_logs_internal_timing_metrics(caplog) -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        batch_size=1000,
+        max_body_bytes=1200,
+        max_concurrent_requests=2,
+        use_compression=True,
+    )
+
+    rows = [
+        {
+            "timestamp": "2026-04-14T01:00:00Z",
+            "asset": "AC.North.C01",
+            "sensor": f"Status_{index}",
+            "data_type": "string",
+            "value": "x" * 250,
+        }
+        for index in range(8)
+    ]
+
+    with caplog.at_level("DEBUG", logger="simulator.writers.omf"):
+        asyncio.run(writer.write_batch(rows))
+
+    message = caplog.messages[-1]
+    assert "OMF write_batch rows=8" in message
+    assert "data_batches=" in message
+    assert "uncompressed_bytes=" in message
+    assert "compressed_bytes=" in message
+    assert "build_seconds=" in message
+    assert "serialization_seconds=" in message
+    assert "post_seconds=" in message
+    assert "concurrency=2" in message
+
+
 def test_omf_writer_splits_container_batches_by_body_size() -> None:
     writer = CaptureOmfWriter(
         endpoint_type="eds",
