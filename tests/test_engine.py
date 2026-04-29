@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -223,6 +224,38 @@ def test_writer_shutdown_flushes_before_close(tmp_path: Path) -> None:
     asyncio.run(engine._flush_and_close_writers())
 
     assert writer.calls == ["flush", "close"]
+
+
+def test_buffer_age_should_reset_after_slow_flush(tmp_path: Path) -> None:
+    class SlowWriter(CaptureWriter):
+        async def write_batch(self, data):
+            time.sleep(0.05)
+            await super().write_batch(data)
+
+    writer = SlowWriter()
+    engine = SimulationEngine(
+        assets=[],
+        writers=[writer],
+        state_manager=StateManager(filepath=tmp_path / "cursor.json"),
+        tick_rate_sec=0.05,
+        backfill_days=0,
+        write_buffer_max_age_sec=0.1,
+        history_mode=True,
+        history_end_time=datetime.now(),
+    )
+    engine._write_buffer = [
+        {"timestamp": "2026-01-01T00:00:00Z", "asset": "A", "sensor": "x", "value": 1}
+    ]
+
+    stale_flush_clock = datetime.now()
+    asyncio.run(engine._flush_buffer(is_backfilling=True))
+    reset_flush_clock = datetime.now()
+
+    stale_age = (datetime.now() - stale_flush_clock).total_seconds()
+    reset_age = (datetime.now() - reset_flush_clock).total_seconds()
+
+    assert stale_age >= 0.03
+    assert reset_age < engine.write_buffer_max_age_sec
 
 
 def test_backfill_metrics_log_includes_throughput(caplog, tmp_path: Path) -> None:

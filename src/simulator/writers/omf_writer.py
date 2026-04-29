@@ -30,6 +30,7 @@ class _OmfBatchStats:
         self.container_messages = 0
         self.data_messages = 0
         self.data_values = 0
+        self._pending_data_batch_stats: dict[str, tuple[int, int]] = {}
         self.uncompressed_bytes = 0
         self.compressed_bytes = 0
         self.build_seconds = 0.0
@@ -59,6 +60,24 @@ class _OmfBatchStats:
                 self.data_values += sum(
                     len(message.get("values", [])) for message in payload
                 )
+
+    def record_data_send(
+        self,
+        message_count: int,
+        value_count: int,
+        uncompressed_bytes: int,
+        compressed_bytes: int,
+        serialization_seconds: float,
+        post_seconds: float,
+    ) -> None:
+        with self._lock:
+            self.uncompressed_bytes += uncompressed_bytes
+            self.compressed_bytes += compressed_bytes
+            self.serialization_seconds += serialization_seconds
+            self.post_seconds += post_seconds
+            self.data_batches += 1
+            self.data_messages += message_count
+            self.data_values += value_count
 
 
 class OmfWriter:
@@ -281,87 +300,103 @@ class OmfWriter:
         stats: _OmfBatchStats | None = None,
     ) -> None:
         started = time.perf_counter()
-        batches: list[list[dict[str, Any]]] = []
-        batch: list[dict[str, Any]] = []
+        batches: list[tuple[str, int, int]] = []
+        batch_parts: list[str] = []
         batch_rows = 0
-        batch_size_bytes = self._list_payload_size([])
+        batch_size_bytes = 2
 
         for container_id, rows in rows_by_container.items():
-            current_values: list[dict[str, Any]] = []
-            current_values_size = self._list_payload_size([])
-            message_base_size = self._data_message_base_size(container_id)
+            current_value_parts: list[str] = []
+            current_values_size = 2
+            message_prefix, message_suffix, message_base_size = (
+                self._data_message_json_parts(container_id)
+            )
             for row in rows:
-                value = self._build_value(row)
-                value_size = self._dict_payload_size(value)
+                value_json = self._build_value_json(row)
+                value_size = len(value_json)
                 candidate_values_size = self._append_size(
-                    current_values_size, bool(current_values), value_size
+                    current_values_size, bool(current_value_parts), value_size
                 )
                 candidate_message_size = message_base_size + candidate_values_size
-                if current_values and (
-                    len(current_values) + 1 > self.batch_size
+                if current_value_parts and (
+                    len(current_value_parts) + 1 > self.batch_size
                     or self._append_size(
-                        batch_size_bytes, bool(batch), candidate_message_size
+                        batch_size_bytes, bool(batch_parts), candidate_message_size
                     ) > self.max_body_bytes
                 ):
-                    message = self._build_data_message_from_values(
-                        container_id, current_values
+                    message_json = self._data_message_json(
+                        message_prefix, current_value_parts, message_suffix
                     )
                     message_size = message_base_size + current_values_size
-                    if batch and (
-                        batch_rows + len(current_values) > self.batch_size
+                    if batch_parts and (
+                        batch_rows + len(current_value_parts) > self.batch_size
                         or self._append_size(batch_size_bytes, True, message_size)
                         > self.max_body_bytes
                     ):
-                        batches.append(batch)
-                        batch = []
+                        batches.append((self._json_array(batch_parts), len(batch_parts), batch_rows))
+                        batch_parts = []
                         batch_rows = 0
-                        batch_size_bytes = self._list_payload_size([])
-                    batch.append(message)
-                    batch_rows += len(current_values)
+                        batch_size_bytes = 2
+                    batch_parts.append(message_json)
+                    batch_rows += len(current_value_parts)
                     batch_size_bytes = self._append_size(
-                        batch_size_bytes, bool(batch) and len(batch) > 1, message_size
+                        batch_size_bytes, len(batch_parts) > 1, message_size
                     )
-                    current_values = [value]
-                    current_values_size = self._append_size(
-                        self._list_payload_size([]), False, value_size
-                    )
+                    current_value_parts = [value_json]
+                    current_values_size = self._append_size(2, False, value_size)
                     continue
-                current_values.append(value)
+                current_value_parts.append(value_json)
                 current_values_size = candidate_values_size
 
-            if not current_values:
+            if not current_value_parts:
                 continue
 
-            message = self._build_data_message_from_values(container_id, current_values)
+            message_json = self._data_message_json(
+                message_prefix, current_value_parts, message_suffix
+            )
             message_size = message_base_size + current_values_size
-            if batch and (
-                batch_rows + len(current_values) > self.batch_size
+            if batch_parts and (
+                batch_rows + len(current_value_parts) > self.batch_size
                 or self._append_size(batch_size_bytes, True, message_size)
                 > self.max_body_bytes
             ):
-                batches.append(batch)
-                batch = []
+                batches.append((self._json_array(batch_parts), len(batch_parts), batch_rows))
+                batch_parts = []
                 batch_rows = 0
-                batch_size_bytes = self._list_payload_size([])
+                batch_size_bytes = 2
 
-            batch.append(message)
-            batch_rows += len(current_values)
+            batch_parts.append(message_json)
+            batch_rows += len(current_value_parts)
             batch_size_bytes = self._append_size(
-                batch_size_bytes, bool(batch) and len(batch) > 1, message_size
+                batch_size_bytes, len(batch_parts) > 1, message_size
             )
 
-        if batch:
-            batches.append(batch)
+        if batch_parts:
+            batches.append((self._json_array(batch_parts), len(batch_parts), batch_rows))
 
         if stats is not None:
             stats.build_seconds += time.perf_counter() - started
-        await self._send_omf_batches("data", batches, stats)
+        await self._send_data_json_batches(batches, stats)
 
     def _build_value(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
             "Timestamp": self._serialize_timestamp(row.get("timestamp")),
             "Value": self._serialize_value(row.get("value"), self._data_type_for_row(row)),
         }
+
+    def _build_value_json(self, row: dict[str, Any]) -> str:
+        timestamp = self._serialize_timestamp(row.get("timestamp"))
+        value = self._serialize_value(row.get("value"), self._data_type_for_row(row))
+        return '{"Timestamp":"' + timestamp + '","Value":' + self._json_value(value) + "}"
+
+    def _json_value(self, value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, int | float):
+            return str(value)
+        if value is None:
+            return "null"
+        return json.dumps(value, separators=(",", ":"))
 
     def _build_data_message_from_values(
         self, container_id: str, values: list[dict[str, Any]]
@@ -387,6 +422,24 @@ class OmfWriter:
     def _data_message_base_size(self, container_id: str) -> int:
         empty_message = self._build_data_message_from_values(container_id, [])
         return self._dict_payload_size(empty_message) - self._list_payload_size([])
+
+    def _json_array(self, parts: list[str]) -> str:
+        return "[" + ",".join(parts) + "]"
+
+    def _data_message_json_parts(self, container_id: str) -> tuple[str, str, int]:
+        prefix = (
+            '{"containerid":'
+            f'{json.dumps(container_id, separators=(",", ":"))}'
+            ',"values":'
+        )
+        suffix = "}"
+        base_size = len(prefix) + len(suffix)
+        return prefix, suffix, base_size
+
+    def _data_message_json(
+        self, prefix: str, value_parts: list[str], suffix: str
+    ) -> str:
+        return prefix + self._json_array(value_parts) + suffix
 
     async def _send_sized_omf_batches(
         self,
@@ -422,6 +475,50 @@ class OmfWriter:
         if stats is not None:
             stats.build_seconds += time.perf_counter() - started
         await self._send_omf_batches(message_type, batches, stats)
+
+    async def _send_data_json_batches(
+        self,
+        batches: list[tuple[str, int, int]],
+        stats: _OmfBatchStats | None = None,
+    ) -> None:
+        if not batches:
+            return
+
+        if self.max_concurrent_requests == 1 or len(batches) == 1:
+            for batch_json, message_count, value_count in batches:
+                self._send_omf_json_message(
+                    "data",
+                    batch_json,
+                    stats=stats,
+                    data_message_count=message_count,
+                    data_value_count=value_count,
+                )
+            return
+
+        if self.endpoint_type == "cds":
+            self._get_token()
+
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+
+        async def send_batch(
+            batch_json: str, message_count: int, value_count: int
+        ) -> None:
+            async with semaphore:
+                await asyncio.to_thread(
+                    self._send_omf_json_message,
+                    "data",
+                    batch_json,
+                    stats=stats,
+                    data_message_count=message_count,
+                    data_value_count=value_count,
+                )
+
+        await asyncio.gather(
+            *(
+                send_batch(batch_json, message_count, value_count)
+                for batch_json, message_count, value_count in batches
+            )
+        )
 
     async def _send_omf_batches(
         self,
@@ -487,19 +584,76 @@ class OmfWriter:
         if status < 200 or status >= 300:
             raise RuntimeError(f"OMF {message_type} message failed: {status}:{text}")
 
+    def _send_omf_json_message(
+        self,
+        message_type: str,
+        payload_json: str,
+        action: str = "create",
+        stats: _OmfBatchStats | None = None,
+        data_message_count: int = 0,
+        data_value_count: int = 0,
+    ) -> None:
+        body: str | bytes
+        headers = self._headers(message_type=message_type, action=action)
+        serialize_started = time.perf_counter()
+        payload_bytes = payload_json.encode("utf-8")
+        if self.use_compression:
+            body = gzip.compress(payload_bytes)
+            headers["compression"] = "gzip"
+        else:
+            body = payload_json
+        serialization_seconds = time.perf_counter() - serialize_started
+
+        post_started = time.perf_counter()
+        status, text = self._post(self.omf_endpoint, headers, body)
+        post_seconds = time.perf_counter() - post_started
+        if stats is not None:
+            self._record_send_stats(
+                stats,
+                message_type,
+                payload_json,
+                len(payload_bytes),
+                len(body) if isinstance(body, bytes) else len(body.encode("utf-8")),
+                serialization_seconds,
+                post_seconds,
+                data_message_count=data_message_count,
+                data_value_count=data_value_count,
+            )
+        if status == 409:
+            return
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"OMF {message_type} message failed: {status}:{text}")
+
     def _record_send_stats(
         self,
         stats: _OmfBatchStats,
         message_type: str,
-        payload: list[dict[str, Any]],
+        payload: list[dict[str, Any]] | str,
         uncompressed_bytes: int,
         compressed_bytes: int,
         serialization_seconds: float,
         post_seconds: float,
+        data_message_count: int = 0,
+        data_value_count: int = 0,
     ) -> None:
+        if isinstance(payload, str):
+            if message_type == "data":
+                stats.record_data_send(
+                    data_message_count,
+                    data_value_count,
+                    uncompressed_bytes,
+                    compressed_bytes,
+                    serialization_seconds,
+                    post_seconds,
+                )
+                return
+            else:
+                payload_for_stats = []
+        else:
+            payload_for_stats = payload
         stats.record_send(
             message_type,
-            payload,
+            payload_for_stats,
             uncompressed_bytes,
             compressed_bytes,
             serialization_seconds,

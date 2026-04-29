@@ -190,6 +190,43 @@ def test_omf_writer_splits_data_batches_by_body_size() -> None:
     assert all(_body_size(post[2]) <= writer.max_body_bytes for post in data_posts)
 
 
+def test_omf_writer_direct_json_data_shape_matches_expected_payload() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        batch_size=1000,
+        use_compression=False,
+    )
+
+    rows = [
+        {
+            "timestamp": "2026-04-14T01:00:00Z",
+            "asset": "AC.North.C01",
+            "sensor": "Output_Current_DC",
+            "value": 42.7,
+        },
+        {
+            "timestamp": "2026-04-14T01:00:01Z",
+            "asset": "AC.North.C01",
+            "sensor": "Output_Current_DC",
+            "value": 43.1,
+        },
+    ]
+
+    asyncio.run(writer.write_batch(rows))
+
+    data_post = next(post for post in writer.posts if post[1]["messagetype"] == "data")
+    assert _json_body(data_post[2]) == [
+        {
+            "containerid": "AC.North.C01.Output_Current_DC",
+            "values": [
+                {"Timestamp": "2026-04-14T01:00:00Z", "Value": 42.7},
+                {"Timestamp": "2026-04-14T01:00:01Z", "Value": 43.1},
+            ],
+        }
+    ]
+
+
 def test_omf_writer_can_post_data_batches_concurrently() -> None:
     writer = SlowCaptureOmfWriter(
         endpoint_type="eds",

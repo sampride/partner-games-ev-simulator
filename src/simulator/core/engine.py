@@ -284,7 +284,7 @@ class SimulationEngine:
                     or buffer_age >= self.write_buffer_max_age_sec
                 ):
                     await self._flush_buffer(is_backfilling=is_backfilling)
-                    last_buffer_flush_real = real_now
+                    last_buffer_flush_real = datetime.now()
 
                 if (real_now - last_save_time).total_seconds() >= 1.0:
                     self.state_manager.save_runtime_state(self.virtual_time, self.assets)
