@@ -60,6 +60,10 @@ The simulator currently supports:
   - writes a single unified history file
   - useful for quick inspection, debugging, and alternate data-loading workflows
 
+- **`jsonl`**
+  - writes newline-delimited JSON files in dated folders
+  - useful when a structured file export is easier to inspect or ingest than CSV
+
 - **`mqtt`**
   - publishes live telemetry in realtime mode
   - supports multiple payload modes
@@ -260,6 +264,7 @@ Each writer entry contains:
 Supported writer types:
 - `csv_per_sensor`
 - `csv`
+- `jsonl`
 - `mqtt`
 
 ### `assets`
@@ -353,6 +358,26 @@ This is ideal for:
 - quick inspection
 - ad hoc analysis
 - fallback bulk ingestion workflows
+
+### `jsonl`
+
+This writer creates newline-delimited JSON files under dated folders. Each line is one telemetry row:
+
+```json
+{"timestamp":"2026-04-14T22:55:29.924885","asset":"AC.North.C01","sensor":"Output_Current_DC","value":42.7,"stream_id":"AC.North.C01.Output_Current_DC"}
+```
+
+Example config:
+
+```yaml
+- type: jsonl
+  config:
+    output_dir: "/data/jsonl"
+    filename: "ev_telemetry.jsonl"
+    include_stream_id: true
+    allow_backfill: true
+    allow_realtime: false
+```
 
 ### Which CSV writer should be used for the AVEVA file adapter?
 

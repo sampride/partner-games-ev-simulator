@@ -103,6 +103,17 @@ writers:
       include_stream_id_column: true
       stream_id_separator: "."
 
+  # Optional structured debug/export writer. Disabled unless uncommented.
+  # - type: jsonl
+  #   config:
+  #     output_dir: "/data/jsonl"
+  #     filename: "ev_telemetry.jsonl"
+  #     include_stream_id: true
+  #     allow_backfill: true
+  #     allow_realtime: false
+  #     max_size_mb: 25.0
+  #     flush_every_batches: 8
+
   - type: mqtt
     config:
       host: "localhost"

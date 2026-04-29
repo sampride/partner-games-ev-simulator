@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ from simulator.models.charging_site import ChargingSite
 from simulator.models.ev_charger import EVCharger
 from simulator.writers.base import Writer
 from simulator.writers.csv_writer import CsvWriter
+from simulator.writers.jsonl_writer import JsonlWriter
 from simulator.writers.mqtt_writer import MqttWriter
 from simulator.writers.sensor_csv_writer import SensorCsvWriter
 
@@ -30,6 +31,7 @@ ASSET_REGISTRY: dict[str, type[Asset]] = {
 
 WRITER_REGISTRY: dict[str, type[Writer]] = {
     "csv": CsvWriter,
+    "jsonl": JsonlWriter,
     "mqtt": MqttWriter,
     "csv_per_sensor": SensorCsvWriter,
 }
