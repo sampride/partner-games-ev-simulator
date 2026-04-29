@@ -11,6 +11,7 @@ class SensorConfig:
     jitter_sec: float = 0.0
     emit_on_change: bool = False
     heartbeat_interval_sec: float | None = None
+    data_type: str = "double"
     next_update: datetime = field(init=False)
     last_emitted_value: Any = field(default=None, init=False)
     has_emitted_value: bool = field(default=False, init=False)
@@ -86,6 +87,7 @@ class Asset:
                         "timestamp": current_time.isoformat(),
                         "asset": self.name,
                         "sensor": sensor.name,
+                        "data_type": sensor.data_type,
                         "value": value,
                     }
                     self._pending_data.append(payload)

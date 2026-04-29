@@ -93,10 +93,16 @@ def test_on_change_sensor_emits_once_with_heartbeat() -> None:
         rows_by_tick.append(asset.flush_data())
 
     assert [row["sensor"] for row in rows_by_tick[0]] == ["Status", "Analog"]
-    assert rows_by_tick[1] == [{"timestamp": rows_by_tick[1][0]["timestamp"], "asset": "Discrete", "sensor": "Analog", "value": 10.0}]
-    assert rows_by_tick[2] == [{"timestamp": rows_by_tick[2][0]["timestamp"], "asset": "Discrete", "sensor": "Analog", "value": 10.0}]
-    assert rows_by_tick[3] == [{"timestamp": rows_by_tick[3][0]["timestamp"], "asset": "Discrete", "sensor": "Analog", "value": 10.0}]
-    assert rows_by_tick[4] == [{"timestamp": rows_by_tick[4][0]["timestamp"], "asset": "Discrete", "sensor": "Analog", "value": 10.0}]
+    for step in range(1, 5):
+        assert rows_by_tick[step] == [
+            {
+                "timestamp": rows_by_tick[step][0]["timestamp"],
+                "asset": "Discrete",
+                "sensor": "Analog",
+                "data_type": "double",
+                "value": 10.0,
+            }
+        ]
     assert [row["sensor"] for row in rows_by_tick[5]] == ["Status", "Analog"]
 
 

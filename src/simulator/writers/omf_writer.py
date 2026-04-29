@@ -37,10 +37,8 @@ class OmfWriter:
         verify_ssl: bool = True,
         timeout_seconds: float = 30.0,
         stream_id_separator: str = ".",
-        type_id: str = "Timeindexed.Double",
-        type_ids: dict[str, str] | None = None,
-        stream_type_ids: dict[str, str] | None = None,
-        sensor_type_ids: dict[str, str] | None = None,
+        default_omf_type: str = "Timeindexed.Double",
+        omf_type_map: dict[str, str] | None = None,
     ) -> None:
         self.endpoint_type = endpoint_type.strip().lower()
         if self.endpoint_type not in {"cds", "eds"}:
@@ -61,19 +59,19 @@ class OmfWriter:
         self.verify_ssl = verify_ssl
         self.timeout_seconds = timeout_seconds
         self.stream_id_separator = stream_id_separator
-        self.default_type_id = type_id
-        self.type_ids = {
-            "default": type_id,
-            "number": type_id,
-            "double": type_id,
+        self.default_omf_type = default_omf_type
+        self.omf_type_map = {
+            "default": default_omf_type,
+            "number": default_omf_type,
+            "double": default_omf_type,
             "integer": "Timeindexed.Integer",
             "string": "Timeindexed.String",
             "boolean": "Timeindexed.Boolean",
         }
-        if type_ids:
-            self.type_ids.update({str(key).lower(): value for key, value in type_ids.items()})
-        self.stream_type_ids = stream_type_ids or {}
-        self.sensor_type_ids = sensor_type_ids or {}
+        if omf_type_map:
+            self.omf_type_map.update(
+                {str(key).lower(): value for key, value in omf_type_map.items()}
+            )
 
         self.omf_endpoint = omf_endpoint or self._build_omf_endpoint()
         self._access_token: str | None = None
@@ -103,21 +101,12 @@ class OmfWriter:
             )
         return f"{base_endpoint}/omf"
 
-    def _container_type_for_row(self, row: dict[str, Any], container_id: str) -> str:
-        sensor = str(row.get("sensor", "unknown_sensor"))
-        if container_id in self.stream_type_ids:
-            return self.stream_type_ids[container_id]
-        if sensor in self.sensor_type_ids:
-            return self.sensor_type_ids[sensor]
+    def _data_type_for_row(self, row: dict[str, Any]) -> str:
+        return str(row.get("data_type") or "double").strip().lower()
 
-        value = row.get("value")
-        if isinstance(value, bool):
-            return self.type_ids.get("boolean", self.default_type_id)
-        if isinstance(value, int):
-            return self.type_ids.get("integer", self.default_type_id)
-        if isinstance(value, float):
-            return self.type_ids.get("double", self.type_ids.get("number", self.default_type_id))
-        return self.type_ids.get("string", self.default_type_id)
+    def _container_type_for_row(self, row: dict[str, Any]) -> str:
+        data_type = self._data_type_for_row(row)
+        return self.omf_type_map.get(data_type, self.default_omf_type)
 
     def _build_stream_id(self, row: dict[str, Any]) -> str:
         asset = str(row.get("asset", "unknown_asset"))
@@ -135,13 +124,21 @@ class OmfWriter:
             return value.isoformat()
         return str(value)
 
-    def _serialize_value(self, value: Any) -> Any:
+    def _serialize_value(self, value: Any, data_type: str) -> Any:
         if isinstance(value, datetime | date):
             return value.isoformat()
+        if data_type == "integer":
+            return int(value)
+        if data_type in {"double", "number", "float"}:
+            return float(value)
+        if data_type == "boolean":
+            return bool(value)
+        if data_type == "string":
+            return str(value)
         return value
 
-    def _build_container(self, container_id: str, type_id: str) -> dict[str, str]:
-        return {"id": container_id, "typeid": type_id}
+    def _build_container(self, container_id: str, omf_type: str) -> dict[str, str]:
+        return {"id": container_id, "typeid": omf_type}
 
     def _build_data_message(
         self, container_id: str, rows: list[dict[str, Any]]
@@ -151,7 +148,9 @@ class OmfWriter:
             "values": [
                 {
                     "Timestamp": self._serialize_timestamp(row.get("timestamp")),
-                    "Value": self._serialize_value(row.get("value")),
+                    "Value": self._serialize_value(
+                        row.get("value"), self._data_type_for_row(row)
+                    ),
                 }
                 for row in rows
             ],
@@ -180,10 +179,10 @@ class OmfWriter:
         for container_id, rows in rows_by_container.items():
             if container_id in self._known_containers:
                 continue
-            type_id = self._container_type_for_row(rows[0], container_id)
-            self._container_types[container_id] = type_id
+            omf_type = self._container_type_for_row(rows[0])
+            self._container_types[container_id] = omf_type
             self._known_containers.add(container_id)
-            containers.append(self._build_container(container_id, type_id))
+            containers.append(self._build_container(container_id, omf_type))
 
         for start in range(0, len(containers), self.container_batch_size):
             self._send_omf_message(

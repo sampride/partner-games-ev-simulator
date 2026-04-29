@@ -143,7 +143,15 @@ class MqttWriter:
         for asset_name, rows in payloads_by_asset.items():
             topic = self._asset_topic(asset_name)
             for start in range(0, len(rows), self.max_rows_per_message):
-                chunk = rows[start : start + self.max_rows_per_message]
+                chunk = [
+                    {
+                        "timestamp": row.get("timestamp"),
+                        "asset": row.get("asset"),
+                        "sensor": row.get("sensor"),
+                        "value": row.get("value"),
+                    }
+                    for row in rows[start : start + self.max_rows_per_message]
+                ]
                 self._publish_payload(topic, chunk, len(chunk))
 
     def _publish_single_object_per_asset(self, payloads_by_asset: dict[str, list[dict[str, Any]]]) -> None:

@@ -278,7 +278,9 @@ Supported writer types:
 The current configuration defines a single charging site with multiple chargers. Each charger can have:
 - a static anomaly schedule
 - random anomaly generation
-- a sensor list with configured intervals
+- a sensor list with configured intervals and optional generic `data_type`
+
+Sensor `data_type` is writer-neutral metadata. Existing CSV, JSONL, and MQTT writers can ignore it; OMF uses it to choose the target platform type ID. If not specified, `data_type` defaults to `double`.
 
 ---
 
@@ -391,7 +393,7 @@ This writer sends OMF 1.2 messages to an OMF REST endpoint. It currently support
 - `endpoint_type: "eds"` with no authentication
 - `endpoint_type: "cds"` with client-credentials bearer-token authentication
 
-The writer does **not** create OMF types. It expects the target platform to already contain one or more compatible time-indexed types with at least `Timestamp` and `Value` properties. It lazily creates one container per simulator stream using the configured type ID, then sends data messages in configurable batches.
+The writer does **not** create OMF types. It expects the target platform to already contain one or more compatible time-indexed types with at least `Timestamp` and `Value` properties. It lazily creates one container per simulator stream using the row's generic `data_type`, then sends data messages in configurable batches.
 
 Stream IDs follow the existing convention:
 
@@ -423,15 +425,11 @@ EDS example:
   config:
     endpoint_type: "eds"
     resource: "http://localhost:5590"
-    type_id: "Timeindexed.Double"
-    type_ids:
+    default_omf_type: "Timeindexed.Double"
+    omf_type_map:
       double: "Timeindexed.Double"
       integer: "Timeindexed.Integer"
       string: "Timeindexed.String"
-    sensor_type_ids:
-      Charger_State: "Timeindexed.String"
-      Warning_Code: "Timeindexed.Integer"
-      Error_Code: "Timeindexed.Integer"
     batch_size: 500
     container_batch_size: 100
     use_compression: true
@@ -450,8 +448,8 @@ CDS example:
     namespace_id: "<namespace-id>"
     client_id_env: "OMF_CLIENT_ID"
     client_secret_env: "OMF_CLIENT_SECRET"
-    type_id: "Timeindexed.Double"
-    type_ids:
+    default_omf_type: "Timeindexed.Double"
+    omf_type_map:
       double: "Timeindexed.Double"
       integer: "Timeindexed.Integer"
       string: "Timeindexed.String"
@@ -462,11 +460,19 @@ CDS example:
     fail_open: true
 ```
 
-Type selection order:
-- `stream_type_ids` can override a full stream ID such as `AC.North.C01.Warning_Code`
-- `sensor_type_ids` can override a sensor name such as `Charger_State`
-- `type_ids` maps value categories such as `double`, `integer`, `string`, and `boolean`
-- `type_id` is the fallback/default type ID
+OMF type selection:
+- each emitted row carries the sensor's generic `data_type`
+- `omf_type_map` maps that generic value to an OMF type ID
+- `default_omf_type` is used when the data type is absent or unmapped
+
+Example sensor config:
+
+```yaml
+- name: "Warning_Code"
+  data_type: "integer"
+  emit_on_change: true
+  heartbeat_interval_sec: 30.0
+```
 
 ### Which CSV writer should be used for the AVEVA file adapter?
 

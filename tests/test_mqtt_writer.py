@@ -70,6 +70,31 @@ def test_single_object_per_asset_mode(monkeypatch):
     }
 
 
+def test_batched_array_mode_excludes_writer_neutral_metadata(monkeypatch):
+    writer = _build_writer(monkeypatch, base_topic="ev_network", payload_mode="batched_array")
+    writer._publish_grouped_data({
+        "Charger_01": [
+            {
+                "timestamp": "2026-04-14T00:00:00Z",
+                "asset": "Charger_01",
+                "sensor": "Output_Current_DC",
+                "data_type": "double",
+                "value": 42.5,
+            }
+        ]
+    })
+
+    _topic, payload, _qos = writer.client.published[0]
+    assert json.loads(payload) == [
+        {
+            "timestamp": "2026-04-14T00:00:00Z",
+            "asset": "Charger_01",
+            "sensor": "Output_Current_DC",
+            "value": 42.5,
+        }
+    ]
+
+
 def test_single_object_per_signal_mode_avoids_duplicate_site_segment(monkeypatch):
     writer = _build_writer(monkeypatch, base_topic="ev_network/Site_Melbourne_North", payload_mode="single_object_per_signal")
     writer._publish_grouped_data({

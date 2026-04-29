@@ -40,14 +40,18 @@ standard_Csensors: &standard_Csensors
   - name: "EV_State_of_Charge"
     interval: 5.0
   - name: "Charger_State"
+    data_type: "integer"
     emit_on_change: true
     heartbeat_interval_sec: 30.0
   - name: "Session_Duration"
+    data_type: "integer"
     interval: 1.0
   - name: "Warning_Code"
+    data_type: "integer"
     emit_on_change: true
     heartbeat_interval_sec: 30.0
   - name: "Error_Code"
+    data_type: "integer"
     emit_on_change: true
     heartbeat_interval_sec: 30.0
 
@@ -63,6 +67,7 @@ standard_Csensors: &standard_Csensors
   - name: "main_breaker_load_percent"
     interval: 2.0
   - name: "number_of_active_sessions"
+    data_type: "integer"
     interval: 1.0
   - name: "ambient_temp_c"
     interval: 60.0
@@ -127,16 +132,13 @@ writers:
   #     # client_id_env: "OMF_CLIENT_ID"
   #     # client_secret_env: "OMF_CLIENT_SECRET"
   #     # The OMF types must already exist in the target platform. Each type is
-  #     # expected to include Timestamp and Value properties.
-  #     type_id: "Timeindexed.Double"
-  #     type_ids:
+  #     # expected to include Timestamp and Value properties. Sensor-level
+  #     # data_type values are mapped here.
+  #     default_omf_type: "Timeindexed.Double"
+  #     omf_type_map:
   #       double: "Timeindexed.Double"
   #       integer: "Timeindexed.Integer"
   #       string: "Timeindexed.String"
-  #     sensor_type_ids:
-  #       Charger_State: "Timeindexed.String"
-  #       Warning_Code: "Timeindexed.Integer"
-  #       Error_Code: "Timeindexed.Integer"
   #     batch_size: 500
   #     container_batch_size: 100
   #     use_compression: true

@@ -59,7 +59,7 @@ def test_eds_writer_creates_containers_and_batches_data() -> None:
         resource="http://localhost:5590",
         batch_size=2,
         use_compression=False,
-        type_id="Timeindexed.Double",
+        default_omf_type="Timeindexed.Double",
     )
 
     asyncio.run(
@@ -135,18 +135,16 @@ def test_existing_omf_container_is_not_recreated() -> None:
     assert message_types.count("data") == 2
 
 
-def test_omf_writer_uses_configured_type_mappings() -> None:
+def test_omf_writer_maps_row_data_type_to_omf_type() -> None:
     writer = CaptureOmfWriter(
         endpoint_type="eds",
         resource="http://localhost:5590",
         use_compression=False,
-        type_ids={
+        omf_type_map={
             "double": "Timeindexed.Double",
             "integer": "Timeindexed.Integer",
             "string": "Timeindexed.String",
         },
-        sensor_type_ids={"Charger_State": "Timeindexed.String"},
-        stream_type_ids={"AC.North.C01.Warning_Code": "Timeindexed.Integer"},
     )
 
     asyncio.run(
@@ -156,25 +154,22 @@ def test_omf_writer_uses_configured_type_mappings() -> None:
                     "timestamp": "2026-04-14T01:00:00Z",
                     "asset": "AC.North.C01",
                     "sensor": "Output_Current_DC",
+                    "data_type": "double",
                     "value": 42.7,
                 },
                 {
                     "timestamp": "2026-04-14T01:00:00Z",
                     "asset": "AC.North.C01",
                     "sensor": "Session_Duration",
-                    "value": 12,
+                    "data_type": "integer",
+                    "value": 12.0,
                 },
                 {
                     "timestamp": "2026-04-14T01:00:00Z",
                     "asset": "AC.North.C01",
                     "sensor": "Charger_State",
+                    "data_type": "string",
                     "value": "Charging",
-                },
-                {
-                    "timestamp": "2026-04-14T01:00:00Z",
-                    "asset": "AC.North.C01",
-                    "sensor": "Warning_Code",
-                    "value": "2",
                 },
             ]
         )
@@ -185,7 +180,22 @@ def test_omf_writer_uses_configured_type_mappings() -> None:
         {"id": "AC.North.C01.Output_Current_DC", "typeid": "Timeindexed.Double"},
         {"id": "AC.North.C01.Session_Duration", "typeid": "Timeindexed.Integer"},
         {"id": "AC.North.C01.Charger_State", "typeid": "Timeindexed.String"},
-        {"id": "AC.North.C01.Warning_Code", "typeid": "Timeindexed.Integer"},
+    ]
+
+    data_payload = _json_body(writer.posts[1][2])
+    assert data_payload == [
+        {
+            "containerid": "AC.North.C01.Output_Current_DC",
+            "values": [{"Timestamp": "2026-04-14T01:00:00Z", "Value": 42.7}],
+        },
+        {
+            "containerid": "AC.North.C01.Session_Duration",
+            "values": [{"Timestamp": "2026-04-14T01:00:00Z", "Value": 12}],
+        },
+        {
+            "containerid": "AC.North.C01.Charger_State",
+            "values": [{"Timestamp": "2026-04-14T01:00:00Z", "Value": "Charging"}],
+        },
     ]
 
 
@@ -207,6 +217,7 @@ def test_cds_writer_authenticates_with_bearer_token() -> None:
                     "timestamp": "2026-04-14T01:00:00Z",
                     "asset": "AC.North.C01",
                     "sensor": "Charger_State",
+                    "data_type": "string",
                     "value": "Charging",
                 }
             ]
