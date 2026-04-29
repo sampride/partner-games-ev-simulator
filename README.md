@@ -201,6 +201,15 @@ Backfill currently writes to:
 
 This is intentional. MQTT is intended to behave like a live device feed, while CSV captures the historical stream.
 
+Backfill progress logs include both density and throughput metrics:
+
+- `avg_tick_rows` and `max_tick_rows` describe how many telemetry rows the model emits per simulation tick. These numbers are mainly a sensor cadence/profile signal, so they may not change after writer or buffering optimizations.
+- `speed` / `virtual_sec_per_real_sec` describe actual catch-up speed. For example, `speed=500.0x` means the simulator processed 500 seconds of virtual time in one wall-clock second.
+- `rows_per_sec` and `ticks_per_sec` describe wall-clock throughput.
+- `window_rows` is the number of generated rows since the previous backfill log.
+- `flushes`, `avg_flush_rows`, `flush_time`, and `flush_time_pct` show whether writer flushes are consuming meaningful wall-clock time.
+- `eta` estimates wall-clock time remaining until the simulator catches up to realtime, based on the latest logging window.
+
 ### Realtime MQTT behaviour
 
 In the current design:

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -196,6 +197,44 @@ def test_writer_shutdown_flushes_before_close(tmp_path: Path) -> None:
     asyncio.run(engine._flush_and_close_writers())
 
     assert writer.calls == ["flush", "close"]
+
+
+def test_backfill_metrics_log_includes_throughput(caplog, tmp_path: Path) -> None:
+    engine = SimulationEngine(
+        assets=[],
+        writers=[],
+        state_manager=StateManager(filepath=tmp_path / "cursor.json"),
+        tick_rate_sec=0.05,
+        backfill_days=0,
+        history_mode=True,
+        history_end_time=datetime.now(),
+    )
+    engine._last_tick_rows = 9
+    engine._tick_count = 20
+    engine._tick_row_accumulator = 180
+    engine._max_tick_rows = 139
+    engine._rows_generated_total = 180
+    engine._writer_target_rows_total = 360
+    engine._buffer_flush_max_seconds = 0.25
+
+    with caplog.at_level(logging.INFO, logger="simulator.engine"):
+        engine._log_backfill_progress(
+            lag=timedelta(seconds=100),
+            window_virtual_seconds=50.0,
+            window_real_seconds=2.0,
+            window_ticks=1000,
+            window_rows=9000,
+            window_flushes=3,
+            window_flush_rows=9000,
+            window_flush_seconds=0.5,
+        )
+
+    message = caplog.messages[-1]
+    assert "speed=25.0x" in message
+    assert "rows_per_sec=4500" in message
+    assert "ticks_per_sec=500" in message
+    assert "flush_time_pct=25.0" in message
+    assert "writer_target_rows=360" in message
 
 
 class ImmediateCaptureWriter(CaptureWriter):
