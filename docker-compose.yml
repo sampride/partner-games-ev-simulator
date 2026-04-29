@@ -9,6 +9,9 @@ services:
       - SIM_CONFIG_PATH=/opt/apg/sim/default_sim.yaml
       - SIM_DATA_PATH=/data
       - PYTHONPATH=/app/src
+      # Pass OMF credentials from the host environment or a local .env file.
+      - OMF_CLIENT_ID=${OMF_CLIENT_ID:-}
+      - OMF_CLIENT_SECRET=${OMF_CLIENT_SECRET:-}
 
     volumes:
       # Simulator config mounted read-only

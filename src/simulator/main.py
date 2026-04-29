@@ -19,6 +19,12 @@ logging.basicConfig(
 logger = logging.getLogger("simulator.main")
 
 
+def _default_config_path(project_root: Path) -> Path:
+    local_config = project_root / "config" / "default_sim.yaml"
+    example_config = project_root / "config" / "config.example.yaml"
+    return local_config if local_config.exists() else example_config
+
+
 def _resolve_history_end_time(sim_config: dict[str, object]) -> datetime | None:
     run_mode = str(sim_config.get("mode", "realtime")).lower()
     if run_mode != "history":
@@ -40,7 +46,7 @@ async def main() -> None:
 
     current_file = Path(__file__).resolve()
     project_root = current_file.parent.parent.parent
-    config_path = Path(os.getenv("SIM_CONFIG_PATH", project_root / "config" / "default_sim.yaml"))
+    config_path = Path(os.getenv("SIM_CONFIG_PATH", _default_config_path(project_root)))
     data_dir = Path(os.getenv("SIM_DATA_PATH", project_root / "data"))
     data_dir.mkdir(parents=True, exist_ok=True)
     state_file_path = data_dir / "simulator_cursor.json"

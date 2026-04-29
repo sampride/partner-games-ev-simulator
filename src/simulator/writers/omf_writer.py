@@ -28,6 +28,8 @@ class OmfWriter:
         client_secret: str | None = None,
         client_id_env: str = "OMF_CLIENT_ID",
         client_secret_env: str = "OMF_CLIENT_SECRET",
+        auth_resource: str | None = None,
+        token_discovery_url: str | None = None,
         token_url: str | None = None,
         allow_backfill: bool = True,
         allow_realtime: bool = True,
@@ -50,6 +52,8 @@ class OmfWriter:
         self.namespace_id = namespace_id
         self.client_id = client_id or os.getenv(client_id_env)
         self.client_secret = client_secret or os.getenv(client_secret_env)
+        self.auth_resource = (auth_resource.rstrip("/") if auth_resource else self.resource)
+        self.token_discovery_url = token_discovery_url
         self.token_url = token_url
         self.allow_backfill = allow_backfill
         self.allow_realtime = allow_realtime
@@ -236,6 +240,8 @@ class OmfWriter:
 
     def _headers(self, message_type: str, action: str) -> dict[str, str]:
         headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
             "messagetype": message_type,
             "action": action,
             "messageformat": "JSON",
@@ -269,14 +275,17 @@ class OmfWriter:
         return self._access_token
 
     def _discover_token_url(self) -> str:
-        discovery_url = f"{self.resource}/identity/.well-known/openid-configuration"
+        discovery_url = (
+            self.token_discovery_url
+            or f"{self.auth_resource}/identity/.well-known/openid-configuration"
+        )
         status, text = self._get(discovery_url, {"Accept": "application/json"})
         if status < 200 or status >= 300:
             raise RuntimeError(f"OMF discovery request failed: {status}:{text}")
 
         token_endpoint = str(json.loads(text)["token_endpoint"])
         parsed = urlparse(token_endpoint)
-        if parsed.scheme != "https" or not token_endpoint.startswith(self.resource):
+        if parsed.scheme != "https":
             raise RuntimeError("OMF discovery returned an unexpected token endpoint")
         self.token_url = token_endpoint
         return token_endpoint

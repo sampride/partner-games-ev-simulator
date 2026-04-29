@@ -119,18 +119,19 @@ writers:
   #     max_size_mb: 25.0
   #     flush_every_batches: 8
 
-  # Optional OMF REST writer for AVEVA CONNECT data services (CDS) or Edge Data
-  # Store (EDS). Disabled unless uncommented.
+  # Optional OMF REST writer for AVEVA CONNECT Data Services (CDS) or Edge Data
+  # Store (EDS). Disabled unless uncommented. Keep real tenant/client values in
+  # an ignored local config file such as config/local_sim.yaml.
   # - type: omf
   #   config:
-  #     endpoint_type: "eds"  # "eds" or "cds"
-  #     resource: "http://localhost:5590"
-  #     # CDS example:
-  #     # resource: "https://uswe.datahub.connect.aveva.com"
-  #     # tenant_id: "<tenant-id>"
-  #     # namespace_id: "<namespace-id>"
-  #     # client_id_env: "OMF_CLIENT_ID"
-  #     # client_secret_env: "OMF_CLIENT_SECRET"
+  #     endpoint_type: "cds"  # "eds" or "cds"
+  #     resource: "https://<namespace-region>.datahub.connect.aveva.com"
+  #     # Optional when the CDS auth host differs from the namespace resource.
+  #     # auth_resource: "https://<auth-host>"
+  #     tenant_id: "<tenant-id>"
+  #     namespace_id: "<namespace-id>"
+  #     client_id_env: "OMF_CLIENT_ID"
+  #     client_secret_env: "OMF_CLIENT_SECRET"
   #     # The OMF types must already exist in the target platform. Each type is
   #     # expected to include Timestamp and Value properties. Sensor-level
   #     # data_type values are mapped here.

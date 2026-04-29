@@ -9,3 +9,16 @@ wheels/
 # Virtual environments
 .venv
 /data/*
+
+# Local secrets and machine-specific simulator config
+.env
+.env.*
+!.env.example
+config/default_sim.yaml
+config/local*.yaml
+config/*secret*.yaml
+config/*secrets*.yaml
+config/*private*.yaml
+config/*credential*.yaml
+config/*credentials*.yaml
+!config/*.example.yaml

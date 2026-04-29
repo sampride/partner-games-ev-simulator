@@ -221,7 +221,57 @@ This is closer to how many live systems behave and avoids writing repetitive unc
 
 ## Configuration overview
 
-All major simulator behaviour is configured in `config/default_sim.yaml`.
+All major simulator behaviour is configured through YAML. The committed full
+example is `config/config.example.yaml`. Put real credentials and
+environment-specific settings in an ignored local file such as
+`config/default_sim.yaml` or `config/local_sim.yaml`.
+
+By default, startup uses `config/default_sim.yaml` when it exists. If it does
+not exist, startup falls back to `config/config.example.yaml`. You can always
+override the path with `SIM_CONFIG_PATH`.
+
+For OMF, `client_id_env` and `client_secret_env` are environment variable
+names. They should normally stay as `OMF_CLIENT_ID` and `OMF_CLIENT_SECRET`;
+the actual client id and secret are read from those environment variables at
+runtime.
+
+PowerShell example:
+
+```powershell
+$env:SIM_CONFIG_PATH = "config/local_sim.yaml"
+$env:OMF_CLIENT_ID = "<client-id>"
+$env:OMF_CLIENT_SECRET = "<client-secret>"
+$env:PYTHONPATH = "src"
+uv run python -m simulator.main
+```
+
+Bash example:
+
+```bash
+export SIM_CONFIG_PATH=config/local_sim.yaml
+export OMF_CLIENT_ID=<client-id>
+export OMF_CLIENT_SECRET=<client-secret>
+PYTHONPATH=src uv run python -m simulator.main
+```
+
+For Docker Compose, copy `.env.example` to `.env` and fill in the values. The
+compose file passes `OMF_CLIENT_ID` and `OMF_CLIENT_SECRET` into the container.
+
+For PyCharm, put `OMF_CLIENT_ID`, `OMF_CLIENT_SECRET`, and optionally
+`SIM_CONFIG_PATH` in the Run Configuration environment variables field.
+
+The repository includes a pre-commit secret check in `.githooks/pre-commit`.
+Enable it once per clone with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+You can also run the same check manually:
+
+```bash
+uv run python scripts/check_secrets.py --all
+```
 
 ### Top-level sections
 
@@ -444,6 +494,9 @@ CDS example:
   config:
     endpoint_type: "cds"
     resource: "https://uswe.datahub.connect.aveva.com"
+    # Optional when token discovery is hosted separately from the namespace API.
+    # auth_resource: "https://<auth-host>"
+    # token_url: "https://<auth-host>/connect/token"
     tenant_id: "<tenant-id>"
     namespace_id: "<namespace-id>"
     client_id_env: "OMF_CLIENT_ID"
@@ -464,6 +517,12 @@ OMF type selection:
 - each emitted row carries the sensor's generic `data_type`
 - `omf_type_map` maps that generic value to an OMF type ID
 - `default_omf_type` is used when the data type is absent or unmapped
+
+OMF authentication endpoint selection:
+- `resource` is always used to build the OMF namespace API URL unless `omf_endpoint` is supplied directly
+- `auth_resource` is used for CDS OpenID discovery when the auth host differs from `resource`
+- `token_discovery_url` can override the discovery document URL
+- `token_url` can bypass discovery and point directly at the token endpoint
 
 Example sensor config:
 

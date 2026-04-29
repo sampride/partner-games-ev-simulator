@@ -92,6 +92,8 @@ def test_eds_writer_creates_containers_and_batches_data() -> None:
         "data",
         "data",
     ]
+    assert writer.posts[0][1]["Content-Type"] == "application/json"
+    assert writer.posts[0][1]["Accept"] == "application/json"
     assert "Authorization" not in writer.posts[0][1]
     assert writer.posts[0][0] == (
         "http://localhost:5590/api/v1/tenants/default/namespaces/default/omf"
@@ -133,6 +135,35 @@ def test_existing_omf_container_is_not_recreated() -> None:
     message_types = [post[1]["messagetype"] for post in writer.posts]
     assert message_types.count("container") == 1
     assert message_types.count("data") == 2
+
+
+def test_omf_writer_marks_compressed_json_payload() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        use_compression=True,
+    )
+
+    asyncio.run(
+        writer.write_batch(
+            [
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Output_Current_DC",
+                    "value": 42.7,
+                }
+            ]
+        )
+    )
+
+    headers = writer.posts[0][1]
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Accept"] == "application/json"
+    assert headers["compression"] == "gzip"
+    assert _json_body(writer.posts[0][2]) == [
+        {"id": "AC.North.C01.Output_Current_DC", "typeid": "Timeindexed.Double"}
+    ]
 
 
 def test_omf_writer_maps_row_data_type_to_omf_type() -> None:
@@ -245,6 +276,52 @@ def test_cds_writer_authenticates_with_bearer_token() -> None:
     assert container_payload == [
         {"id": "AC.North.C01.Charger_State", "typeid": "Timeindexed.String"}
     ]
+
+
+def test_cds_writer_allows_auth_resource_to_differ_from_namespace_resource() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="cds",
+        resource="https://namespace.example",
+        auth_resource="https://auth.example",
+        tenant_id="tenant",
+        namespace_id="namespace",
+        client_id="client",
+        client_secret="secret",
+        use_compression=False,
+    )
+
+    def auth_get(url, headers):
+        writer.gets.append((url, headers))
+        return (
+            200,
+            json.dumps({"token_endpoint": "https://auth.example/connect/token"}),
+        )
+
+    writer._get = auth_get
+
+    asyncio.run(
+        writer.write_batch(
+            [
+                {
+                    "timestamp": "2026-04-14T01:00:00Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Output_Current_DC",
+                    "value": 42.7,
+                }
+            ]
+        )
+    )
+
+    assert writer.gets == [
+        (
+            "https://auth.example/identity/.well-known/openid-configuration",
+            {"Accept": "application/json"},
+        )
+    ]
+    assert writer.form_posts[0][0] == "https://auth.example/connect/token"
+    assert writer.posts[0][0] == (
+        "https://namespace.example/api/v1/tenants/tenant/namespaces/namespace/omf"
+    )
 
 
 def test_omf_writer_registered_in_config_factory(tmp_path) -> None:
