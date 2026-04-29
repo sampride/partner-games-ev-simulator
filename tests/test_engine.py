@@ -22,8 +22,10 @@ class DummyAsset(Asset):
 
 
 class CaptureWriter:
-    def __init__(self) -> None:
+    def __init__(self, allow_backfill=True, allow_realtime=True) -> None:
         self.rows = []
+        self.allow_backfill = allow_backfill
+        self.allow_realtime = allow_realtime
 
     async def write_batch(self, data):
         self.rows.extend(data)
@@ -35,10 +37,10 @@ class CaptureWriter:
         return
 
     def supports_backfill(self):
-        return True
+        return self.allow_backfill
 
     def supports_realtime(self):
-        return True
+        return self.allow_realtime
 
 
 def test_history_mode_stops(tmp_path: Path) -> None:
@@ -144,6 +146,56 @@ def test_writer_failure_isolated(tmp_path: Path) -> None:
 
     asyncio.run(engine.run())
     assert good.rows
+
+
+def test_backfill_does_not_buffer_when_no_writer_supports_backfill(tmp_path: Path) -> None:
+    asset = DummyAsset("A")
+    writer = CaptureWriter(allow_backfill=False, allow_realtime=True)
+    state = StateManager(filepath=tmp_path / "cursor.json")
+
+    engine = SimulationEngine(
+        assets=[asset],
+        writers=[writer],
+        state_manager=state,
+        tick_rate_sec=0.05,
+        backfill_days=0,
+        write_buffer_max_rows=1,
+        history_mode=True,
+        history_end_time=datetime.now() + timedelta(seconds=0.2),
+    )
+
+    asyncio.run(engine.run())
+
+    assert writer.rows == []
+    assert engine._write_buffer == []
+
+
+def test_writer_shutdown_flushes_before_close(tmp_path: Path) -> None:
+    class OrderedWriter(CaptureWriter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = []
+
+        async def flush(self):
+            self.calls.append("flush")
+
+        async def close(self):
+            self.calls.append("close")
+
+    writer = OrderedWriter()
+    engine = SimulationEngine(
+        assets=[],
+        writers=[writer],
+        state_manager=StateManager(filepath=tmp_path / "cursor.json"),
+        tick_rate_sec=0.05,
+        backfill_days=0,
+        history_mode=True,
+        history_end_time=datetime.now(),
+    )
+
+    asyncio.run(engine._flush_and_close_writers())
+
+    assert writer.calls == ["flush", "close"]
 
 
 class ImmediateCaptureWriter(CaptureWriter):

@@ -30,6 +30,7 @@ class CsvWriter:
         self.stream_id_separator = stream_id_separator
 
         self._open_files: dict[Path, tuple[TextIO, csv.DictWriter]] = {}
+        self._current_filepaths: dict[Path, Path] = {}
         self._pending_batches = 0
 
     def _fieldnames(self) -> list[str]:
@@ -45,7 +46,17 @@ class CsvWriter:
         fields.append("value")
         return fields
 
+    def _is_under_size_limit(self, filepath: Path) -> bool:
+        existing = self._open_files.get(filepath)
+        if existing is not None:
+            return existing[0].tell() < self.max_bytes
+        return filepath.exists() and filepath.stat().st_size < self.max_bytes
+
     def _get_filepath(self, directory: Path, base_filename: str) -> Path:
+        cached = self._current_filepaths.get(directory)
+        if cached is not None and self._is_under_size_limit(cached):
+            return cached
+
         stem = Path(base_filename).stem
         suffix = Path(base_filename).suffix
         counter = 0
@@ -55,8 +66,10 @@ class CsvWriter:
             filepath = directory / filename
 
             if not filepath.exists():
+                self._current_filepaths[directory] = filepath
                 return filepath
-            if filepath.stat().st_size < self.max_bytes:
+            if self._is_under_size_limit(filepath):
+                self._current_filepaths[directory] = filepath
                 return filepath
             counter += 1
 
@@ -125,6 +138,7 @@ class CsvWriter:
         for handle, _ in self._open_files.values():
             handle.close()
         self._open_files.clear()
+        self._current_filepaths.clear()
 
     def supports_backfill(self) -> bool:
         return self.allow_backfill

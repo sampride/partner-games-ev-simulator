@@ -121,14 +121,25 @@ class EVCharger(Asset):
             "min_duration_sec": 1800,
             "max_duration_sec": 7200,
         }
+        self._name_seed_cache: dict[str, float] = {}
+        self._wave_timestamp_time: datetime | None = None
+        self._wave_timestamp_value = 0.0
 
     def _name_seed(self, salt: str) -> float:
+        cached = self._name_seed_cache.get(salt)
+        if cached is not None:
+            return cached
         total = sum((idx + 1) * ord(ch) for idx, ch in enumerate(f"{self.name}:{salt}"))
-        return float(total)
+        seed = float(total)
+        self._name_seed_cache[salt] = seed
+        return seed
 
     def _wave(self, current_time: datetime, rate: float, salt: str) -> float:
         phase = (self._name_seed(salt) % 360.0) * math.pi / 180.0
-        return math.sin(current_time.timestamp() * rate + phase)
+        if current_time != self._wave_timestamp_time:
+            self._wave_timestamp_time = current_time
+            self._wave_timestamp_value = current_time.timestamp()
+        return math.sin(self._wave_timestamp_value * rate + phase)
 
     def start_session(self, duration_sec: float) -> None:
         if self.state["charger_state"] == self.STATE_FAULT:
@@ -193,8 +204,6 @@ class EVCharger(Asset):
         if active == "NONE":
             self.state["anomaly_severity"] = max(0.0, self.state["anomaly_severity"] - delta_sec / 1200.0)
         else:
-            elapsed = uptime - max(0.0, end_time - float(next((float(a.get("duration_sec", 0.0)) for a in self.scheduled_anomalies if str(a.get("type", "NONE")) == active and float(a.get("start_sec", 0.0)) <= uptime < float(a.get("start_sec", 0.0)) + float(a.get("duration_sec", 0.0))), end_time - uptime)))
-            del elapsed  # keep intent explicit without relying on scheduled-only anomalies
             time_left = max(1.0, end_time - uptime)
             ramp_window = min(2400.0, max(240.0, time_left * 0.55))
             self.state["anomaly_severity"] = min(1.0, self.state["anomaly_severity"] + (delta_sec / ramp_window))

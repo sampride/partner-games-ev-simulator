@@ -104,7 +104,7 @@ def _validate_sensor_override(sensor_conf: dict[str, Any], context: str) -> None
     interval = float(sensor_conf.get("interval", 1.0))
     if interval <= 0:
         raise ConfigValidationError(f"Sensor interval on {context} must be > 0")
-    heartbeat = sensor_conf.get("heartbeat_interval")
+    heartbeat = sensor_conf.get("heartbeat_interval", sensor_conf.get("heartbeat_interval_sec"))
     if heartbeat is not None and float(heartbeat) <= 0:
         raise ConfigValidationError(f"Sensor heartbeat_interval on {context} must be > 0")
     data_type = sensor_conf.get("data_type")
@@ -137,8 +137,8 @@ def _apply_sensor_overrides(asset: Asset, sensor_overrides: list[dict[str, Any]]
                 sensor.data_type = str(s_conf["data_type"]).strip().lower()
             if "emit_on_change" in s_conf:
                 sensor.emit_on_change = bool(s_conf["emit_on_change"])
-            if "heartbeat_interval" in s_conf:
-                heartbeat = s_conf.get("heartbeat_interval")
+            if "heartbeat_interval" in s_conf or "heartbeat_interval_sec" in s_conf:
+                heartbeat = s_conf.get("heartbeat_interval", s_conf.get("heartbeat_interval_sec"))
                 sensor.heartbeat_interval_sec = None if heartbeat is None else float(heartbeat)
             elif sensor.emit_on_change and sensor.heartbeat_interval_sec is None:
                 sensor.heartbeat_interval_sec = sensor.update_interval_sec

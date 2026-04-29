@@ -65,3 +65,35 @@ def test_sensor_data_type_config_is_applied(tmp_path: Path) -> None:
     assert site_sensor.data_type == "integer"
     assert charger_sensor.data_type == "integer"
     assert default_sensor.data_type == "double"
+
+
+def test_sensor_heartbeat_interval_sec_alias_is_applied(tmp_path: Path) -> None:
+    config = {
+        "simulation": {"tick_rate_sec": 0.1},
+        "assets": [
+            {
+                "name": "SiteA",
+                "type": "ChargingSite",
+                "chargers": [
+                    {
+                        "name": "C1",
+                        "sensors": [
+                            {
+                                "name": "Warning_Code",
+                                "emit_on_change": True,
+                                "heartbeat_interval_sec": 45.0,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    assets, _, _ = build_simulation_components(config, tmp_path)
+
+    charger = assets[0].get_child_assets()[0]
+    warning_sensor = next(sensor for sensor in charger.sensors if sensor.name == "Warning_Code")
+
+    assert warning_sensor.emit_on_change is True
+    assert warning_sensor.heartbeat_interval_sec == 45.0

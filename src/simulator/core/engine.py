@@ -53,6 +53,18 @@ class SimulationEngine:
             if hasattr(asset, "_refresh_next_sensor_due"):
                 asset._refresh_next_sensor_due()
 
+    def _has_buffered_writer_for_mode(self, is_backfilling: bool) -> bool:
+        for index, writer in enumerate(self.writers):
+            if index in self._disabled_writers:
+                continue
+            if not is_backfilling and index in self._realtime_immediate_writer_indexes:
+                continue
+            if is_backfilling and writer.supports_backfill():
+                return True
+            if not is_backfilling and writer.supports_realtime():
+                return True
+        return False
+
     async def _write_with_writer(self, writer_index: int, writer: Writer, batch: list[dict[str, Any]]) -> None:
         try:
             await writer.write_batch(batch)
@@ -101,13 +113,16 @@ class SimulationEngine:
             await asyncio.gather(*write_tasks)
         logger.debug("Flushed %d rows to %d buffered writers", len(batch), active_writers)
 
+    async def _flush_and_close_writer(self, writer: Writer) -> None:
+        await writer.flush()
+        await writer.close()
+
     async def _flush_and_close_writers(self) -> None:
         close_tasks = []
         for index, writer in enumerate(self.writers):
             if index in self._disabled_writers:
                 continue
-            close_tasks.append(writer.flush())
-            close_tasks.append(writer.close())
+            close_tasks.append(self._flush_and_close_writer(writer))
         results = await asyncio.gather(*close_tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
@@ -155,6 +170,7 @@ class SimulationEngine:
 
                 tick_rows = 0
                 realtime_immediate_rows: list[dict[str, Any]] = []
+                has_buffered_writer = self._has_buffered_writer_for_mode(is_backfilling)
                 for asset in self.assets:
                     rows = asset.flush_data()
                     tick_rows += len(rows)
@@ -162,7 +178,8 @@ class SimulationEngine:
                         continue
                     if not is_backfilling and self._realtime_immediate_writer_indexes:
                         realtime_immediate_rows.extend(rows)
-                    self._write_buffer.extend(rows)
+                    if has_buffered_writer:
+                        self._write_buffer.extend(rows)
 
                 if realtime_immediate_rows:
                     await self._write_realtime_immediate(realtime_immediate_rows)

@@ -18,9 +18,26 @@ class SensorCsvWriter:
         self.max_bytes = int(max_size_mb * 1024 * 1024)
         self.flush_every_batches = max(1, int(flush_every_batches))
         self._open_files: dict[Path, tuple[TextIO, csv.writer]] = {}
+        self._current_filepaths: dict[tuple[str, str, str, str], Path] = {}
         self._pending_batches = 0
 
-    def _get_filepath(self, directory: Path, base_name: str, date_compact: str) -> Path:
+    def _is_under_size_limit(self, filepath: Path) -> bool:
+        existing = self._open_files.get(filepath)
+        if existing is not None:
+            return existing[0].tell() < self.max_bytes
+        return filepath.exists() and filepath.stat().st_size < self.max_bytes
+
+    def _get_filepath(
+        self,
+        key: tuple[str, str, str, str],
+        directory: Path,
+        base_name: str,
+        date_compact: str,
+    ) -> Path:
+        cached = self._current_filepaths.get(key)
+        if cached is not None and self._is_under_size_limit(cached):
+            return cached
+
         counter = 0
         while True:
             suffix = f"_{counter}" if counter > 0 else ""
@@ -28,8 +45,10 @@ class SensorCsvWriter:
             filepath = directory / filename
 
             if not filepath.exists():
+                self._current_filepaths[key] = filepath
                 return filepath
-            if filepath.stat().st_size < self.max_bytes:
+            if self._is_under_size_limit(filepath):
+                self._current_filepaths[key] = filepath
                 return filepath
             counter += 1
 
@@ -64,7 +83,8 @@ class SensorCsvWriter:
         for (date_dir, date_compact, asset_name, sensor_name), rows in batches.items():
             daily_dir = self.base_output_dir / date_dir
             base_name = f"{asset_name}.{sensor_name}"
-            filepath = self._get_filepath(daily_dir, base_name, date_compact)
+            key = (date_dir, date_compact, asset_name, sensor_name)
+            filepath = self._get_filepath(key, daily_dir, base_name, date_compact)
             writer = self._get_writer(filepath)
             writer.writerows([[r["timestamp"], r["value"]] for r in rows])
 
@@ -82,6 +102,7 @@ class SensorCsvWriter:
         for handle, _ in self._open_files.values():
             handle.close()
         self._open_files.clear()
+        self._current_filepaths.clear()
 
     def supports_backfill(self) -> bool:
         return self.allow_backfill
