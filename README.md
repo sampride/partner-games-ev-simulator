@@ -454,6 +454,13 @@ This writer sends OMF 1.2 messages to an OMF REST endpoint. It currently support
 
 The writer does **not** create OMF types. It expects the target platform to already contain one or more compatible time-indexed types with at least `Timestamp` and `Value` properties. It lazily creates one container per simulator stream using the row's generic `data_type`, then sends data messages in configurable batches.
 
+OMF message bodies are size-limited by the target platform. The writer batches
+container and data messages by compact JSON body size using `max_body_bytes`
+instead of relying only on a row count. The default is `184320` bytes, leaving
+headroom below the 192 KiB OMF limit. `batch_size` and `container_batch_size`
+remain as high row-count safety ceilings; for backfill throughput they should
+normally be high enough that `max_body_bytes` is the limiting factor.
+
 Stream IDs follow the existing convention:
 
 ```text
@@ -489,8 +496,9 @@ EDS example:
       double: "Timeindexed.Double"
       integer: "Timeindexed.Integer"
       string: "Timeindexed.String"
-    batch_size: 500
-    container_batch_size: 100
+    max_body_bytes: 184320
+    batch_size: 5000
+    container_batch_size: 1000
     use_compression: true
     allow_backfill: true
     allow_realtime: false
@@ -515,7 +523,8 @@ CDS example:
       double: "Timeindexed.Double"
       integer: "Timeindexed.Integer"
       string: "Timeindexed.String"
-    batch_size: 500
+    max_body_bytes: 184320
+    batch_size: 5000
     use_compression: true
     allow_backfill: true
     allow_realtime: false

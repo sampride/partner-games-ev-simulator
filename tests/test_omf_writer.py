@@ -41,6 +41,11 @@ def _json_body(body):
     return json.loads(raw)
 
 
+def _body_size(body) -> int:
+    raw = gzip.decompress(body) if isinstance(body, bytes) else body.encode("utf-8")
+    return len(raw)
+
+
 def test_omf_writer_support_flags() -> None:
     writer = CaptureOmfWriter(
         endpoint_type="eds",
@@ -135,6 +140,61 @@ def test_existing_omf_container_is_not_recreated() -> None:
     message_types = [post[1]["messagetype"] for post in writer.posts]
     assert message_types.count("container") == 1
     assert message_types.count("data") == 2
+
+
+def test_omf_writer_splits_data_batches_by_body_size() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        batch_size=1000,
+        max_body_bytes=1200,
+        use_compression=False,
+    )
+
+    rows = [
+        {
+            "timestamp": "2026-04-14T01:00:00Z",
+            "asset": "AC.North.C01",
+            "sensor": f"Status_{index}",
+            "data_type": "string",
+            "value": "x" * 250,
+        }
+        for index in range(8)
+    ]
+
+    asyncio.run(writer.write_batch(rows))
+
+    data_posts = [post for post in writer.posts if post[1]["messagetype"] == "data"]
+    assert len(data_posts) > 1
+    assert all(_body_size(post[2]) <= writer.max_body_bytes for post in data_posts)
+
+
+def test_omf_writer_splits_container_batches_by_body_size() -> None:
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        container_batch_size=1000,
+        max_body_bytes=1200,
+        use_compression=False,
+    )
+
+    rows = [
+        {
+            "timestamp": "2026-04-14T01:00:00Z",
+            "asset": "AC.North.C01",
+            "sensor": f"Sensor_With_A_Long_Name_{index:03d}",
+            "value": 42.7,
+        }
+        for index in range(30)
+    ]
+
+    asyncio.run(writer.write_batch(rows))
+
+    container_posts = [
+        post for post in writer.posts if post[1]["messagetype"] == "container"
+    ]
+    assert len(container_posts) > 1
+    assert all(_body_size(post[2]) <= writer.max_body_bytes for post in container_posts)
 
 
 def test_omf_writer_marks_compressed_json_payload() -> None:

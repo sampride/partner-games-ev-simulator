@@ -14,6 +14,9 @@ from urllib.request import Request, urlopen
 
 logger = logging.getLogger("simulator.writers.omf")
 
+DEFAULT_MAX_OMF_BODY_BYTES = 180 * 1024
+MAX_OMF_BODY_BYTES = 192 * 1024
+
 
 class OmfWriter:
     def __init__(
@@ -33,8 +36,9 @@ class OmfWriter:
         token_url: str | None = None,
         allow_backfill: bool = True,
         allow_realtime: bool = True,
-        batch_size: int = 500,
-        container_batch_size: int = 100,
+        batch_size: int = 5000,
+        container_batch_size: int = 1000,
+        max_body_bytes: int = DEFAULT_MAX_OMF_BODY_BYTES,
         use_compression: bool = True,
         verify_ssl: bool = True,
         timeout_seconds: float = 30.0,
@@ -59,6 +63,7 @@ class OmfWriter:
         self.allow_realtime = allow_realtime
         self.batch_size = max(1, int(batch_size))
         self.container_batch_size = max(1, int(container_batch_size))
+        self.max_body_bytes = min(MAX_OMF_BODY_BYTES, max(1024, int(max_body_bytes)))
         self.use_compression = use_compression
         self.verify_ssl = verify_ssl
         self.timeout_seconds = timeout_seconds
@@ -170,11 +175,7 @@ class OmfWriter:
             rows_by_container.setdefault(container_id, []).append(row)
 
         await self._ensure_containers(rows_by_container)
-        data_messages: list[dict[str, Any]] = []
-        for container_id, rows in rows_by_container.items():
-            data_messages.extend(self._chunk_data_messages(container_id, rows))
-
-        self._send_data_messages(data_messages)
+        self._send_data_rows(rows_by_container)
 
     async def _ensure_containers(
         self, rows_by_container: dict[str, list[dict[str, Any]]]
@@ -188,49 +189,154 @@ class OmfWriter:
             self._known_containers.add(container_id)
             containers.append(self._build_container(container_id, omf_type))
 
-        for start in range(0, len(containers), self.container_batch_size):
-            self._send_omf_message(
-                "container", containers[start : start + self.container_batch_size]
-            )
+        self._send_sized_omf_batches(
+            "container",
+            containers,
+            max_items_per_batch=self.container_batch_size,
+        )
 
-    def _chunk_data_messages(
-        self, container_id: str, rows: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        messages = []
-        for start in range(0, len(rows), self.batch_size):
-            chunk = rows[start : start + self.batch_size]
-            messages.append(
-                self._build_data_message(container_id, chunk)
-            )
-        return messages
-
-    def _send_data_messages(self, data_messages: list[dict[str, Any]]) -> None:
+    def _send_data_rows(self, rows_by_container: dict[str, list[dict[str, Any]]]) -> None:
         batch: list[dict[str, Any]] = []
         batch_rows = 0
+        batch_size_bytes = self._list_payload_size([])
 
-        for message in data_messages:
-            message_rows = len(message.get("values", []))
-            if batch and batch_rows + message_rows > self.batch_size:
+        for container_id, rows in rows_by_container.items():
+            current_values: list[dict[str, Any]] = []
+            current_values_size = self._list_payload_size([])
+            message_base_size = self._data_message_base_size(container_id)
+            for row in rows:
+                value = self._build_value(row)
+                value_size = self._dict_payload_size(value)
+                candidate_values_size = self._append_size(
+                    current_values_size, bool(current_values), value_size
+                )
+                candidate_message_size = message_base_size + candidate_values_size
+                if current_values and (
+                    len(current_values) + 1 > self.batch_size
+                    or self._append_size(
+                        batch_size_bytes, bool(batch), candidate_message_size
+                    ) > self.max_body_bytes
+                ):
+                    message = self._build_data_message_from_values(
+                        container_id, current_values
+                    )
+                    message_size = message_base_size + current_values_size
+                    if batch and (
+                        batch_rows + len(current_values) > self.batch_size
+                        or self._append_size(batch_size_bytes, True, message_size)
+                        > self.max_body_bytes
+                    ):
+                        self._send_omf_message("data", batch)
+                        batch = []
+                        batch_rows = 0
+                        batch_size_bytes = self._list_payload_size([])
+                    batch.append(message)
+                    batch_rows += len(current_values)
+                    batch_size_bytes = self._append_size(
+                        batch_size_bytes, bool(batch) and len(batch) > 1, message_size
+                    )
+                    current_values = [value]
+                    current_values_size = self._append_size(
+                        self._list_payload_size([]), False, value_size
+                    )
+                    continue
+                current_values.append(value)
+                current_values_size = candidate_values_size
+
+            if not current_values:
+                continue
+
+            message = self._build_data_message_from_values(container_id, current_values)
+            message_size = message_base_size + current_values_size
+            if batch and (
+                batch_rows + len(current_values) > self.batch_size
+                or self._append_size(batch_size_bytes, True, message_size)
+                > self.max_body_bytes
+            ):
                 self._send_omf_message("data", batch)
                 batch = []
                 batch_rows = 0
+                batch_size_bytes = self._list_payload_size([])
 
             batch.append(message)
-            batch_rows += message_rows
+            batch_rows += len(current_values)
+            batch_size_bytes = self._append_size(
+                batch_size_bytes, bool(batch) and len(batch) > 1, message_size
+            )
 
         if batch:
             self._send_omf_message("data", batch)
+
+    def _build_value(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "Timestamp": self._serialize_timestamp(row.get("timestamp")),
+            "Value": self._serialize_value(row.get("value"), self._data_type_for_row(row)),
+        }
+
+    def _build_data_message_from_values(
+        self, container_id: str, values: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {"containerid": container_id, "values": values}
+
+    def _payload_json(self, payload: list[dict[str, Any]]) -> str:
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _payload_size(self, payload: list[dict[str, Any]]) -> int:
+        return len(self._payload_json(payload).encode("utf-8"))
+
+    def _dict_payload_size(self, payload: dict[str, Any]) -> int:
+        return len(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+
+    def _list_payload_size(self, payload: list[dict[str, Any]]) -> int:
+        return len(self._payload_json(payload).encode("utf-8"))
+
+    def _append_size(self, current_list_size: int, has_items: bool, item_size: int) -> int:
+        separator_size = 1 if has_items else 0
+        return current_list_size + separator_size + item_size
+
+    def _data_message_base_size(self, container_id: str) -> int:
+        empty_message = self._build_data_message_from_values(container_id, [])
+        return self._dict_payload_size(empty_message) - self._list_payload_size([])
+
+    def _send_sized_omf_batches(
+        self,
+        message_type: str,
+        payloads: list[dict[str, Any]],
+        *,
+        max_items_per_batch: int,
+    ) -> None:
+        batch: list[dict[str, Any]] = []
+        batch_size_bytes = self._list_payload_size([])
+        for payload in payloads:
+            payload_size = self._dict_payload_size(payload)
+            candidate_size = self._append_size(
+                batch_size_bytes, bool(batch), payload_size
+            )
+            if batch and (
+                len(batch) + 1 > max_items_per_batch
+                or candidate_size > self.max_body_bytes
+            ):
+                self._send_omf_message(message_type, batch)
+                batch = []
+                batch_size_bytes = self._list_payload_size([])
+            batch.append(payload)
+            batch_size_bytes = self._append_size(
+                batch_size_bytes, bool(batch) and len(batch) > 1, payload_size
+            )
+        if batch:
+            self._send_omf_message(message_type, batch)
 
     def _send_omf_message(
         self, message_type: str, payload: list[dict[str, Any]], action: str = "create"
     ) -> None:
         body: str | bytes
         headers = self._headers(message_type=message_type, action=action)
+        payload_json = self._payload_json(payload)
         if self.use_compression:
-            body = gzip.compress(json.dumps(payload).encode("utf-8"))
+            body = gzip.compress(payload_json.encode("utf-8"))
             headers["compression"] = "gzip"
         else:
-            body = json.dumps(payload)
+            body = payload_json
 
         status, text = self._post(self.omf_endpoint, headers, body)
         if status == 409:

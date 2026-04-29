@@ -140,8 +140,9 @@ writers:
   #       double: "Timeindexed.Double"
   #       integer: "Timeindexed.Integer"
   #       string: "Timeindexed.String"
-  #     batch_size: 500
-  #     container_batch_size: 100
+  #     max_body_bytes: 184320  # 180 KiB; OMF message body max is 192 KiB
+  #     batch_size: 5000        # row-count safety ceiling; size limit usually wins
+  #     container_batch_size: 1000
   #     use_compression: true
   #     allow_backfill: true
   #     allow_realtime: false
