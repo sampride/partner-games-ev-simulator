@@ -15,6 +15,7 @@ from simulator.writers.base import Writer
 from simulator.writers.csv_writer import CsvWriter
 from simulator.writers.jsonl_writer import JsonlWriter
 from simulator.writers.mqtt_writer import MqttWriter
+from simulator.writers.omf_writer import OmfWriter
 from simulator.writers.sensor_csv_writer import SensorCsvWriter
 
 logger = logging.getLogger("simulator.config")
@@ -33,6 +34,7 @@ WRITER_REGISTRY: dict[str, type[Writer]] = {
     "csv": CsvWriter,
     "jsonl": JsonlWriter,
     "mqtt": MqttWriter,
+    "omf": OmfWriter,
     "csv_per_sensor": SensorCsvWriter,
 }
 

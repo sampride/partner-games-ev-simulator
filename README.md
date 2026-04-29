@@ -64,6 +64,10 @@ The simulator currently supports:
   - writes newline-delimited JSON files in dated folders
   - useful when a structured file export is easier to inspect or ingest than CSV
 
+- **`omf`**
+  - sends OMF 1.2 JSON messages to a CDS or EDS OMF REST endpoint
+  - creates streams with container messages and sends telemetry with batched data messages
+
 - **`mqtt`**
   - publishes live telemetry in realtime mode
   - supports multiple payload modes
@@ -265,6 +269,7 @@ Supported writer types:
 - `csv_per_sensor`
 - `csv`
 - `jsonl`
+- `omf`
 - `mqtt`
 
 ### `assets`
@@ -377,6 +382,67 @@ Example config:
     include_stream_id: true
     allow_backfill: true
     allow_realtime: false
+```
+
+### `omf`
+
+This writer sends OMF 1.2 messages to an OMF REST endpoint. It currently supports:
+- `endpoint_type: "eds"` with no authentication
+- `endpoint_type: "cds"` with client-credentials bearer-token authentication
+
+The writer sends shared OMF dynamic types, lazily creates one container per simulator stream, then sends data messages in configurable batches. Stream IDs follow the existing convention:
+
+```text
+AC.North.C01.Output_Current_DC
+```
+
+The generated container shape is:
+
+```json
+{"id":"AC.North.C01.Output_Current_DC","typeid":"SimulatorNumberValue"}
+```
+
+The generated data shape is:
+
+```json
+{
+  "containerid": "AC.North.C01.Output_Current_DC",
+  "values": [
+    {"Timestamp": "2026-04-14T22:55:29Z", "Value": 42.7}
+  ]
+}
+```
+
+EDS example:
+
+```yaml
+- type: omf
+  config:
+    endpoint_type: "eds"
+    resource: "http://localhost:5590"
+    batch_size: 500
+    container_batch_size: 100
+    use_compression: true
+    allow_backfill: true
+    allow_realtime: false
+```
+
+CDS example:
+
+```yaml
+- type: omf
+  config:
+    endpoint_type: "cds"
+    resource: "https://uswe.datahub.connect.aveva.com"
+    tenant_id: "<tenant-id>"
+    namespace_id: "<namespace-id>"
+    client_id_env: "OMF_CLIENT_ID"
+    client_secret_env: "OMF_CLIENT_SECRET"
+    batch_size: 500
+    use_compression: true
+    allow_backfill: true
+    allow_realtime: false
+    fail_open: true
 ```
 
 ### Which CSV writer should be used for the AVEVA file adapter?
