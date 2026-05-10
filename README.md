@@ -312,6 +312,10 @@ Important fields:
 - `write_buffer_max_age_sec`
   - maximum age before buffered rows are flushed to buffered writers
 
+- `stop_when_no_active_writers`
+  - when `true`, stops the simulator if every configured writer has been disabled
+  - useful for production backfills because the cursor will not continue advancing after output failure
+
 - `mode`
   - `realtime` or `history`
 

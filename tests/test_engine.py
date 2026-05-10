@@ -4,7 +4,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from simulator.core.engine import SimulationEngine
+import pytest
+
+from simulator.core.engine import NoActiveWritersError, SimulationEngine
 from simulator.models.base import Asset, SensorConfig
 from simulator.utils.state import StateManager
 
@@ -174,6 +176,36 @@ def test_writer_failure_isolated(tmp_path: Path) -> None:
 
     asyncio.run(engine.run())
     assert good.rows
+
+
+def test_writer_failure_can_stop_simulation_without_advancing_cursor(tmp_path: Path) -> None:
+    class FailingWriter(CaptureWriter):
+        async def write_batch(self, data):
+            raise RuntimeError("boom")
+
+    asset = DummyAsset("A")
+    writer = FailingWriter()
+    state_path = tmp_path / "cursor.json"
+    state = StateManager(filepath=state_path)
+    start_time = datetime(2026, 1, 1, 0, 0, 0)
+
+    engine = SimulationEngine(
+        assets=[asset],
+        writers=[writer],
+        state_manager=state,
+        tick_rate_sec=0.05,
+        backfill_days=0,
+        write_buffer_max_rows=1,
+        stop_when_no_active_writers=True,
+        history_mode=True,
+        history_end_time=start_time + timedelta(seconds=1),
+    )
+    engine.virtual_time = start_time
+
+    with pytest.raises(NoActiveWritersError):
+        asyncio.run(engine.run())
+
+    assert not state_path.exists()
 
 
 def test_backfill_does_not_buffer_when_no_writer_supports_backfill(tmp_path: Path) -> None:

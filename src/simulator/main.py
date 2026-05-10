@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from simulator.core.engine import SimulationEngine
+from simulator.core.engine import NoActiveWritersError, SimulationEngine
 from simulator.utils.config_parser import ConfigValidationError, build_simulation_components, load_config, validate_config
 from simulator.utils.state import StateManager
 
@@ -69,6 +69,7 @@ async def main() -> None:
     realtime_log_interval_sec = float(sim_config.get("realtime_log_interval_sec", 30.0))
     write_buffer_max_rows = int(sim_config.get("write_buffer_max_rows", 10000))
     write_buffer_max_age_sec = float(sim_config.get("write_buffer_max_age_sec", 2.0))
+    stop_when_no_active_writers = bool(sim_config.get("stop_when_no_active_writers", False))
     history_mode = str(sim_config.get("mode", "realtime")).lower() == "history"
     history_end_time = _resolve_history_end_time(sim_config)
 
@@ -85,6 +86,8 @@ async def main() -> None:
         data_dir,
         state_file_path,
     )
+    if stop_when_no_active_writers:
+        logger.info("Fail-closed writer protection enabled")
     if history_mode:
         logger.info("History generation mode enabled. End time=%s", history_end_time.isoformat() if history_end_time else "immediate")
 
@@ -98,15 +101,24 @@ async def main() -> None:
         realtime_log_interval_sec=realtime_log_interval_sec,
         write_buffer_max_rows=write_buffer_max_rows,
         write_buffer_max_age_sec=write_buffer_max_age_sec,
+        stop_when_no_active_writers=stop_when_no_active_writers,
         history_mode=history_mode,
         history_end_time=history_end_time,
     )
 
+    save_final_state = True
     try:
         await engine.run()
+    except NoActiveWritersError as exc:
+        save_final_state = False
+        logger.error("%s", exc)
+        raise
     finally:
-        engine.state_manager.save_runtime_state(engine.virtual_time, engine.assets)
-        logger.info("Simulation state saved to %s", state_file_path)
+        if save_final_state:
+            engine.state_manager.save_runtime_state(engine.virtual_time, engine.assets)
+            logger.info("Simulation state saved to %s", state_file_path)
+        else:
+            logger.warning("Final simulation state not saved after writer failure")
 
 
 if __name__ == "__main__":
