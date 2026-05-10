@@ -9,7 +9,7 @@ x-simulator-common: &simulator-common
   logging:
     driver: awslogs
     options: &awslogs-common
-      awslogs-region: ${AWS_REGION:-ap-southeast-2}
+      awslogs-region: ${AWS_REGION:-eu-west-1}
       awslogs-group: ${CLOUDWATCH_LOG_GROUP:-/apg/partner-games-simulator}
       awslogs-create-group: "true"
       mode: non-blocking
