@@ -49,7 +49,12 @@ class ChargingSite(Asset):
 
         for charger in self.chargers:
             charger.tick(current_time, delta_sec, global_state)
-            self._pending_data.extend(charger.flush_data())
+            for row in charger.flush_data():
+                asset_name = str(row.get("asset", ""))
+                if asset_name and not asset_name.startswith(f"{self.name}."):
+                    row = dict(row)
+                    row["asset"] = f"{self.name}.{asset_name}"
+                self._pending_data.append(row)
 
         total_power = sum(c.state["input_power_kw"] for c in self.chargers)
         active_sessions = sum(

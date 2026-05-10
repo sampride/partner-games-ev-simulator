@@ -5,6 +5,8 @@ import threading
 import time
 from datetime import datetime
 
+from simulator.models.charging_site import ChargingSite
+from simulator.models.ev_charger import EVCharger
 from simulator.utils.config_parser import build_simulation_components, validate_config
 from simulator.writers.omf_writer import OmfWriter
 
@@ -77,6 +79,34 @@ def test_omf_writer_support_flags() -> None:
 
     assert writer.supports_backfill() is False
     assert writer.supports_realtime() is True
+
+
+def test_site_prefixes_child_asset_rows_for_stream_ids() -> None:
+    site = ChargingSite("AC.North")
+    charger = EVCharger("C01")
+    site.add_charger(charger)
+
+    site.tick(datetime(2026, 5, 10, 12, 0, 0), 1.0, {})
+
+    charger_rows = [
+        row for row in site.flush_data() if row["asset"] == "AC.North.C01"
+    ]
+    assert charger_rows
+
+    writer = CaptureOmfWriter(
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        use_compression=False,
+    )
+
+    stream_id = writer._build_stream_id(
+        {
+            "asset": "AC.North.C01",
+            "sensor": "Charger_State",
+        }
+    )
+
+    assert stream_id == "AC.North.C01.Charger_State"
 
 
 def test_eds_writer_creates_containers_and_batches_data() -> None:
