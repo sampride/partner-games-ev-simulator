@@ -1,0 +1,107 @@
+x-simulator-common: &simulator-common
+  build: .
+  restart: unless-stopped
+  init: true
+  environment:
+    PYTHONPATH: /app/src
+    PYTHONUNBUFFERED: "1"
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  logging:
+    driver: awslogs
+    options: &awslogs-common
+      awslogs-region: ${AWS_REGION:-ap-southeast-2}
+      awslogs-group: ${CLOUDWATCH_LOG_GROUP:-/apg/partner-games-simulator}
+      awslogs-create-group: "true"
+      mode: non-blocking
+      max-buffer-size: 4m
+
+services:
+  sim-tenant-1:
+    <<: *simulator-common
+    container_name: apg-sim-tenant-1
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIM_CONFIG_PATH: /opt/apg/sim/tenant-1.yaml
+      SIM_DATA_PATH: /data/tenant-1
+    volumes:
+      - /opt/apg/sim/tenant-1.yaml:/opt/apg/sim/tenant-1.yaml:ro
+      - /data/apg-sim/tenant-1:/data/tenant-1:rw
+    logging:
+      driver: awslogs
+      options:
+        <<: *awslogs-common
+        awslogs-stream: sim-tenant-1
+
+  sim-tenant-2:
+    <<: *simulator-common
+    container_name: apg-sim-tenant-2
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIM_CONFIG_PATH: /opt/apg/sim/tenant-2.yaml
+      SIM_DATA_PATH: /data/tenant-2
+    volumes:
+      - /opt/apg/sim/tenant-2.yaml:/opt/apg/sim/tenant-2.yaml:ro
+      - /data/apg-sim/tenant-2:/data/tenant-2:rw
+    logging:
+      driver: awslogs
+      options:
+        <<: *awslogs-common
+        awslogs-stream: sim-tenant-2
+
+  sim-tenant-3:
+    <<: *simulator-common
+    container_name: apg-sim-tenant-3
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIM_CONFIG_PATH: /opt/apg/sim/tenant-3.yaml
+      SIM_DATA_PATH: /data/tenant-3
+    volumes:
+      - /opt/apg/sim/tenant-3.yaml:/opt/apg/sim/tenant-3.yaml:ro
+      - /data/apg-sim/tenant-3:/data/tenant-3:rw
+    logging:
+      driver: awslogs
+      options:
+        <<: *awslogs-common
+        awslogs-stream: sim-tenant-3
+
+  sim-tenant-4:
+    <<: *simulator-common
+    container_name: apg-sim-tenant-4
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIM_CONFIG_PATH: /opt/apg/sim/tenant-4.yaml
+      SIM_DATA_PATH: /data/tenant-4
+    volumes:
+      - /opt/apg/sim/tenant-4.yaml:/opt/apg/sim/tenant-4.yaml:ro
+      - /data/apg-sim/tenant-4:/data/tenant-4:rw
+    logging:
+      driver: awslogs
+      options:
+        <<: *awslogs-common
+        awslogs-stream: sim-tenant-4
+
+  sim-tenant-5:
+    <<: *simulator-common
+    container_name: apg-sim-tenant-5
+    environment:
+      PYTHONPATH: /app/src
+      PYTHONUNBUFFERED: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SIM_CONFIG_PATH: /opt/apg/sim/tenant-5.yaml
+      SIM_DATA_PATH: /data/tenant-5
+    volumes:
+      - /opt/apg/sim/tenant-5.yaml:/opt/apg/sim/tenant-5.yaml:ro
+      - /data/apg-sim/tenant-5:/data/tenant-5:rw
+    logging:
+      driver: awslogs
+      options:
+        <<: *awslogs-common
+        awslogs-stream: sim-tenant-5

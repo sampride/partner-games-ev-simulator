@@ -22,3 +22,4 @@ config/*private*.yaml
 config/*credential*.yaml
 config/*credentials*.yaml
 !config/*.example.yaml
+/docs/CODEBASE_REVIEW_NOTES.md
