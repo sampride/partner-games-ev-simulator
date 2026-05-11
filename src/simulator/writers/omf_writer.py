@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import date, datetime, timezone
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -105,6 +105,8 @@ class OmfWriter:
         use_compression: bool = True,
         verify_ssl: bool = True,
         timeout_seconds: float = 30.0,
+        request_retries: int = 2,
+        retry_backoff_seconds: float = 2.0,
         stream_id_separator: str = ".",
         default_omf_type: str = "Timeindexed.Double",
         omf_type_map: dict[str, str] | None = None,
@@ -131,6 +133,8 @@ class OmfWriter:
         self.use_compression = use_compression
         self.verify_ssl = verify_ssl
         self.timeout_seconds = timeout_seconds
+        self.request_retries = max(0, int(request_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self.stream_id_separator = stream_id_separator
         self.default_omf_type = default_omf_type
         self.omf_type_map = {
@@ -738,12 +742,31 @@ class OmfWriter:
         return self._open(request)
 
     def _open(self, request: Request) -> tuple[int, str]:
+        for attempt in range(self.request_retries + 1):
+            try:
+                return self._open_once(request)
+            except HTTPError as exc:
+                return int(exc.code), exc.read().decode("utf-8")
+            except (TimeoutError, URLError) as exc:
+                if attempt >= self.request_retries:
+                    raise
+                delay = self.retry_backoff_seconds * (2**attempt)
+                logger.warning(
+                    "OMF request failed (%s); retrying in %.1fs attempt=%d/%d",
+                    exc,
+                    delay,
+                    attempt + 1,
+                    self.request_retries,
+                )
+                if delay > 0:
+                    time.sleep(delay)
+
+        raise RuntimeError("OMF request retry loop ended unexpectedly")
+
+    def _open_once(self, request: Request) -> tuple[int, str]:
         context = None if self.verify_ssl else ssl._create_unverified_context()
-        try:
-            with urlopen(request, timeout=self.timeout_seconds, context=context) as response:
-                return int(response.status), response.read().decode("utf-8")
-        except HTTPError as exc:
-            return int(exc.code), exc.read().decode("utf-8")
+        with urlopen(request, timeout=self.timeout_seconds, context=context) as response:
+            return int(response.status), response.read().decode("utf-8")
 
     async def flush(self) -> None:
         return

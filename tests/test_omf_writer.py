@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from datetime import datetime
+from urllib.error import URLError
 
 from simulator.models.charging_site import ChargingSite
 from simulator.models.ev_charger import EVCharger
@@ -57,6 +58,19 @@ class SlowCaptureOmfWriter(CaptureOmfWriter):
         finally:
             with self._lock:
                 self.active_posts -= 1
+
+
+class FlakyCaptureOmfWriter(OmfWriter):
+    def __init__(self, failures_before_success: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.failures_before_success = failures_before_success
+        self.open_attempts = 0
+
+    def _open_once(self, request):
+        self.open_attempts += 1
+        if self.open_attempts <= self.failures_before_success:
+            raise URLError("timed out")
+        return 202, ""
 
 
 def _json_body(body):
@@ -281,6 +295,32 @@ def test_omf_writer_can_post_data_batches_concurrently() -> None:
     asyncio.run(writer.write_batch(rows))
 
     assert writer.max_active_posts > 1
+
+
+def test_omf_writer_retries_transient_url_errors() -> None:
+    writer = FlakyCaptureOmfWriter(
+        failures_before_success=2,
+        endpoint_type="eds",
+        resource="http://localhost:5590",
+        request_retries=2,
+        retry_backoff_seconds=0,
+        use_compression=False,
+    )
+
+    asyncio.run(
+        writer.write_batch(
+            [
+                {
+                    "timestamp": "2026-04-14T01:00:02Z",
+                    "asset": "AC.North.C01",
+                    "sensor": "Output_Current_DC",
+                    "value": 44.2,
+                }
+            ]
+        )
+    )
+
+    assert writer.open_attempts == 4
 
 
 def test_omf_writer_logs_internal_timing_metrics(caplog) -> None:
